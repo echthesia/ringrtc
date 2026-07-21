@@ -213,7 +213,7 @@ public class CallManager {
     finalConfig.enableHardwareVp9Encode = Util.deviceSupportsVp9HardwareEncoder(eglBase) && !isHardwareEncodeBlocked() && appVideoConfig.enableHardwareVp9Encode;
     finalConfig.enableHardwareVp9Decode = Util.deviceSupportsVp9HardwareDecoder(eglBase) && appVideoConfig.enableHardwareVp9Decode;
     finalConfig.enableSoftwareVp9Encode = appVideoConfig.enableSoftwareVp9Encode;
-    finalConfig.enableSoftwareVp9Decode = appVideoConfig.enableSoftwareVp9Encode;
+    finalConfig.enableSoftwareVp9Decode = appVideoConfig.enableSoftwareVp9Decode;
     return finalConfig;
   }
 
