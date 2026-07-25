@@ -203,7 +203,7 @@ pub struct AudioSenderStatsSnapshot {
     pub packets_per_second: f32,
     pub average_packet_size: f32,
     pub bitrate: f32,
-    pub remote_packets_lost_pct: f32,
+    pub remote_packets_lost_pct: f64,
     pub remote_jitter: f64,
     pub remote_rtt: f64,
     pub audio_energy: f64,
@@ -254,7 +254,6 @@ impl AudioSenderStatsSnapshot {
         prev_stats: &AudioSenderStatistics,
         seconds_elapsed: f32,
     ) -> Self {
-        let packets_lost_delta = delta!(curr_stats, prev_stats, remote_packets_lost);
         let packets_sent_delta = delta!(curr_stats, prev_stats, packets_sent);
         let audio_energy_delta = delta!(curr_stats, prev_stats, total_audio_energy);
         let bytes_sent_delta = delta!(curr_stats, prev_stats, bytes_sent);
@@ -264,9 +263,8 @@ impl AudioSenderStatsSnapshot {
             .naive_checked_div(packets_sent_delta as f32)
             .unwrap_or(0.0);
         let bitrate = compute_bitrate(bytes_sent_delta, seconds_elapsed);
-        let remote_packets_lost_pct =
-            compute_packets_lost_pct(packets_lost_delta.max(0) as u32, packets_sent_delta);
 
+        let remote_packets_lost_pct = curr_stats.remote_fraction_lost * 100.0;
         let remote_jitter = 1000.0 * curr_stats.remote_jitter;
         let remote_rtt = 1000.0 * curr_stats.remote_round_trip_time;
 
@@ -447,7 +445,7 @@ pub struct VideoSenderStatsSnapshot {
     pub pli_count: u32,
     pub quality_limitation_reason: Cow<'static, str>,
     pub quality_limitation_resolution_changes: u32,
-    pub remote_packets_lost_pct: f32,
+    pub remote_packets_lost_pct: f64,
     pub remote_jitter: f64,
     pub remote_round_trip_time: f64,
     pub codec: StatsVideoCodecType,
@@ -539,7 +537,6 @@ impl VideoSenderStatsSnapshot {
         prev_stats: &VideoSenderStatistics,
         seconds_elapsed: f32,
     ) -> Self {
-        let packets_lost_delta = delta!(curr_stats, prev_stats, remote_packets_lost);
         let packets_sent_delta = delta!(curr_stats, prev_stats, packets_sent);
         let bytes_sent_delta = delta!(curr_stats, prev_stats, bytes_sent);
         let retransmitted_bytes_sent_delta =
@@ -577,8 +574,7 @@ impl VideoSenderStatsSnapshot {
             * total_packets_send_delay_delta
                 .naive_checked_div(frames_encoded_delta as f64)
                 .unwrap_or(0.0);
-        let remote_packets_lost_pct =
-            compute_packets_lost_pct(packets_lost_delta.max(0) as u32, packets_sent_delta);
+        let remote_packets_lost_pct = curr_stats.remote_fraction_lost * 100.0;
         let remote_jitter = 1000.0 * curr_stats.remote_jitter;
         let remote_round_trip_time = 1000.0 * curr_stats.remote_round_trip_time;
 
@@ -1147,6 +1143,7 @@ pub struct AudioSenderStatistics {
     pub ssrc: u32,
     pub packets_sent: u32,
     pub bytes_sent: u64,
+    pub remote_fraction_lost: f64,
     pub remote_packets_lost: i32,
     pub remote_jitter: f64,
     pub remote_round_trip_time: f64,
@@ -1171,6 +1168,7 @@ pub struct VideoSenderStatistics {
     pub pli_count: u32,
     pub quality_limitation_reason: u32,
     pub quality_limitation_resolution_changes: u32,
+    pub remote_fraction_lost: f64,
     pub remote_packets_lost: i32,
     pub remote_jitter: f64,
     pub remote_round_trip_time: f64,
@@ -1196,6 +1194,7 @@ impl Default for VideoSenderStatistics {
             pli_count: Default::default(),
             quality_limitation_reason: Default::default(),
             quality_limitation_resolution_changes: Default::default(),
+            remote_fraction_lost: Default::default(),
             remote_packets_lost: Default::default(),
             remote_jitter: Default::default(),
             remote_round_trip_time: Default::default(),

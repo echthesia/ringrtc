@@ -491,7 +491,7 @@ impl From<&AudioSenderStatsSnapshot> for StreamStats {
         Self {
             ssrc: Some(snapshot.ssrc),
             bitrate: Some(snapshot.bitrate),
-            packet_loss: Some(snapshot.remote_packets_lost_pct),
+            packet_loss: Some(snapshot.remote_packets_lost_pct as f32),
             jitter: Some(snapshot.remote_jitter as f32),
             rtt: Some(snapshot.remote_rtt as f32),
             ..Default::default()
@@ -517,7 +517,7 @@ impl From<&VideoSenderStatsSnapshot> for StreamStats {
         Self {
             ssrc: Some(snapshot.ssrc),
             bitrate: Some(snapshot.bitrate),
-            packet_loss: Some(snapshot.remote_packets_lost_pct),
+            packet_loss: Some(snapshot.remote_packets_lost_pct as f32),
             jitter: Some(snapshot.remote_jitter as f32),
             rtt: Some(snapshot.remote_round_trip_time as f32),
             framerate: Some(snapshot.framerate),
@@ -786,7 +786,7 @@ impl CallInfo {
                 self.quality_stats_sketches
                     .audio
                     .packet_loss_send
-                    .add(snapshot.remote_packets_lost_pct as f64);
+                    .add(snapshot.remote_packets_lost_pct);
                 self.quality_stats_sketches
                     .audio
                     .rtt
@@ -794,7 +794,9 @@ impl CallInfo {
                 self.stream_summaries
                     .update_audio_send_stream_summary(snapshot.ssrc, |summary| {
                         summary.bitrate.push(snapshot.bitrate);
-                        summary.packet_loss.push(snapshot.remote_packets_lost_pct);
+                        summary
+                            .packet_loss
+                            .push(snapshot.remote_packets_lost_pct as f32);
                         summary.jitter.push(snapshot.remote_jitter as f32);
                     });
                 self.stats_sets
@@ -836,7 +838,7 @@ impl CallInfo {
                 self.quality_stats_sketches
                     .video
                     .packet_loss_send
-                    .add(snapshot.remote_packets_lost_pct as f64);
+                    .add(snapshot.remote_packets_lost_pct);
                 self.quality_stats_sketches
                     .video
                     .rtt
@@ -844,7 +846,9 @@ impl CallInfo {
                 self.stream_summaries
                     .update_video_send_stream_summary(snapshot.ssrc, |summary| {
                         summary.bitrate.push(snapshot.bitrate);
-                        summary.packet_loss.push(snapshot.remote_packets_lost_pct);
+                        summary
+                            .packet_loss
+                            .push(snapshot.remote_packets_lost_pct as f32);
                         summary.jitter.push(snapshot.remote_jitter as f32);
                         summary.video_codec = snapshot.codec;
                         summary.codec_implementation = snapshot.encoder_implementation.clone();
