@@ -13,6 +13,7 @@ mod test;
 use std::{
     env,
     fs::File,
+    io::Write,
     path::Path,
     time::{Duration, SystemTime},
 };
@@ -22,6 +23,7 @@ use clap::Parser;
 use common::ClientProfile;
 use hex::FromHex;
 use itertools::{Itertools, iproduct};
+use log::info;
 
 use crate::{
     common::{
@@ -1150,15 +1152,41 @@ async fn run_dred_tests(test: &mut Test) -> Result<()> {
     Ok(())
 }
 
+pub fn format_log_line(
+    buf: &mut env_logger::fmt::Formatter,
+    record: &log::Record<'_>,
+) -> std::io::Result<()> {
+    write!(buf, "[{} {:<5} ", buf.timestamp_millis(), record.level())?;
+    match record.file() {
+        // Log the filename for crates in this workspace.
+        Some(file) if !file.starts_with(['\\', '/']) => {
+            write!(buf, "{}:{}", file, record.line().unwrap_or(0))?;
+        }
+        // Log the target (usually the module path) for anything else.
+        _ => {
+            write!(buf, "{}", record.target())?;
+        }
+    }
+    writeln!(buf, "] {}", record.args())?;
+    Ok(())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
+    unsafe {
+        std::env::set_var("RUST_BACKTRACE", "full");
+    }
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format(format_log_line)
+        .target(env_logger::Target::Stdout)
+        .init();
     let args = Args::parse();
 
-    println!("Starting the call simulator...");
+    info!("Starting the call simulator...");
 
     let mut root_path = env::current_dir()?;
     root_path.push(args.root);
-    println!("  Using root path: {}", root_path.display());
+    info!("  Using root path: {}", root_path.display());
     env::set_current_dir(&root_path)?;
 
     if args.build {
@@ -1204,7 +1232,7 @@ async fn main() -> Result<()> {
             } else {
                 (direct_call_config.clone(), test_set_name)
             };
-        println!(
+        info!(
             "Running test set {} as call type {:?}",
             test_set_name, call_type_config,
         );
@@ -1262,13 +1290,13 @@ fn generate_client_profiles() -> Vec<ClientProfile> {
 }
 
 fn get_client_profiles(dir_path: &str) -> Vec<ClientProfile> {
-    println!("Looking for client profiles in `{}`", dir_path);
+    info!("Looking for client profiles in `{}`", dir_path);
     let files = std::fs::read_dir(dir_path)
         .expect("Failed to list client profile directory")
         .map(|entry| entry.unwrap().path())
         .filter(|p| p.extension().is_some_and(|ext| ext == "json"))
         .sorted();
-    println!("Found {} client profiles config files", files.len());
+    info!("Found {} client profiles config files", files.len());
     files.map(|path| get_client_profile(&path)).collect()
 }
 

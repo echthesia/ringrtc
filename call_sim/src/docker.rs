@@ -15,6 +15,7 @@ use bollard::{
 use chrono::DateTime;
 use futures_util::stream::StreamExt;
 use itertools::Itertools;
+use log::{error, info};
 use tokio::{
     fs::OpenOptions,
     io::{AsyncWriteExt, stdout},
@@ -31,9 +32,9 @@ use crate::{
 
 /// This function builds all docker images that we need.
 pub async fn build_images(build_visqol_mos: bool) -> Result<()> {
-    println!("\nBuilding images:");
+    info!("Building images:");
 
-    println!("cli:");
+    info!("cli:");
     stdout().flush().await?;
     let mut now = std::time::Instant::now();
     let _ = Command::new("docker")
@@ -50,9 +51,9 @@ pub async fn build_images(build_visqol_mos: bool) -> Result<()> {
         .wait()
         .await?;
 
-    println!("... took {:.2?}", now.elapsed());
+    info!("... took {:.2?}", now.elapsed());
 
-    println!("signaling-server:");
+    info!("signaling-server:");
     stdout().flush().await?;
     now = std::time::Instant::now();
     let _ = Command::new("docker")
@@ -69,10 +70,10 @@ pub async fn build_images(build_visqol_mos: bool) -> Result<()> {
         .wait()
         .await?;
 
-    println!("... took {:.2?}", now.elapsed());
+    info!("... took {:.2?}", now.elapsed());
 
     if build_visqol_mos {
-        println!("visqol_mos:");
+        info!("visqol_mos:");
         stdout().flush().await?;
         now = std::time::Instant::now();
         let _ = Command::new("docker")
@@ -81,12 +82,12 @@ pub async fn build_images(build_visqol_mos: bool) -> Result<()> {
             .spawn()?
             .wait()
             .await?;
-        println!("... took {:.2?}", now.elapsed());
+        info!("... took {:.2?}", now.elapsed());
     } else {
-        println!("skip visqol_mos");
+        info!("skip visqol_mos");
     }
 
-    println!("pesq_mos:");
+    info!("pesq_mos:");
     stdout().flush().await?;
     now = std::time::Instant::now();
     let _ = Command::new("docker")
@@ -95,9 +96,9 @@ pub async fn build_images(build_visqol_mos: bool) -> Result<()> {
         .spawn()?
         .wait()
         .await?;
-    println!("... took {:.2?}", now.elapsed());
+    info!("... took {:.2?}", now.elapsed());
 
-    println!("plc_mos:");
+    info!("plc_mos:");
     stdout().flush().await?;
     now = std::time::Instant::now();
     let _ = Command::new("docker")
@@ -106,14 +107,14 @@ pub async fn build_images(build_visqol_mos: bool) -> Result<()> {
         .spawn()?
         .wait()
         .await?;
-    println!("... took {:.2?}", now.elapsed());
+    info!("... took {:.2?}", now.elapsed());
 
     Ok(())
 }
 
 /// This function cleans all docker containers that were used.
 pub async fn clean_up(container_names: Vec<&str>) -> Result<()> {
-    println!("\nCleaning up containers:");
+    info!("Cleaning up containers:");
 
     // Ignore errors and try to move on.
     for container in container_names.iter() {
@@ -124,7 +125,7 @@ pub async fn clean_up(container_names: Vec<&str>) -> Result<()> {
             .wait()
             .await;
         if result.is_err() {
-            println!("  Couldn't remove {}", container);
+            info!("  Couldn't remove {}", container);
         }
     }
 
@@ -132,7 +133,7 @@ pub async fn clean_up(container_names: Vec<&str>) -> Result<()> {
 }
 
 pub async fn create_network() -> Result<()> {
-    println!("\nCreating networks:");
+    info!("Creating networks:");
 
     let _ = Command::new("docker")
         .args([
@@ -150,7 +151,7 @@ pub async fn create_network() -> Result<()> {
 }
 
 pub async fn clean_network() -> Result<()> {
-    println!("\nCleaning networks:");
+    info!("Cleaning networks:");
 
     let _ = Command::new("docker")
         .args(["network", "rm", "ringrtc_default"])
@@ -162,7 +163,7 @@ pub async fn clean_network() -> Result<()> {
 }
 
 pub async fn start_signaling_server() -> Result<()> {
-    println!("\nStarting Signaling Server:");
+    info!("Starting Signaling Server:");
 
     let _ = Command::new("docker")
         .args([
@@ -195,7 +196,7 @@ pub async fn start_signaling_server() -> Result<()> {
 ///
 /// Note: We'll typically use one server, turn, to serve both clients.
 pub async fn start_turn_server() -> Result<()> {
-    println!("\nStarting TURN/relay server");
+    info!("Starting TURN/relay server");
 
     let _ = Command::new("docker")
         .args([
@@ -247,7 +248,7 @@ pub async fn start_turn_server() -> Result<()> {
 }
 
 pub async fn start_tcpdump(name: &str, report_path: &str) -> Result<()> {
-    println!("\nStarting tcpdump for `{}`", name);
+    info!("Starting tcpdump for `{}`", name);
 
     let _ = Command::new("docker")
         .args([
@@ -287,7 +288,7 @@ pub async fn start_client(
     media_path: &str,
     data_path: &str,
 ) -> Result<()> {
-    println!("\nStarting Client `{}`:", name);
+    info!("Starting Client `{}`:", name);
 
     let _ = Command::new("docker")
         .args([
@@ -734,7 +735,7 @@ pub async fn start_playout(
     file_duration: f64,
     desired_duration: u16,
 ) -> Result<()> {
-    println!("start playing");
+    info!("start playing");
 
     // Give a bit of slack by rounding the duration up, in case the file is within a small fraction
     // of a second of the desired time (for instance, normal_phrasing is 29.9997 seconds long),
@@ -790,7 +791,7 @@ async fn wait_ready(name: &str, max_attempts: u32, probe: &[&str]) -> Result<boo
             .await?
             .success();
         if succeeded {
-            println!(
+            info!(
                 "{name} `{}` ready after {attempt} attempt(s)",
                 probe.join(" ")
             );
@@ -798,7 +799,7 @@ async fn wait_ready(name: &str, max_attempts: u32, probe: &[&str]) -> Result<boo
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
-    println!(
+    info!(
         "{name} `{}` not ready after {max_attempts} attempts",
         probe.join(" ")
     );
@@ -806,7 +807,7 @@ async fn wait_ready(name: &str, max_attempts: u32, probe: &[&str]) -> Result<boo
 }
 
 pub async fn start_virtual_audio(name: &str, output_file: &Option<String>) -> Result<()> {
-    println!("start virtual audio and its dependencies");
+    info!("start virtual audio and its dependencies");
 
     // Start the session bus. `nohup` keeps it alive after `docker exec` returns.
     let _ = Command::new("docker")
@@ -953,7 +954,7 @@ pub async fn start_cli(
     call_type: &CallTypeConfig,
     profile: bool,
 ) -> Result<()> {
-    println!("Starting cli for `{}`", name);
+    info!("Starting cli for `{}`", name);
 
     start_virtual_audio(name, &media_io.audio_output_file).await?;
 
@@ -1171,7 +1172,7 @@ pub async fn start_cli(
         args.push(format!("--group-member-info={}", member_info));
     }
 
-    println!("Final Client args: {}", args.join(" "));
+    info!("Final Client args: {}", args.join(" "));
     let _ = Command::new("docker").args(&args).spawn()?.wait().await?;
 
     Ok(())
@@ -1243,7 +1244,7 @@ pub async fn finish_perf(client: &str) -> Result<()> {
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
-    println!("{} perf exited? {}", client, exited);
+    info!("{} perf exited? {}", client, exited);
     Ok(())
 }
 
@@ -1253,7 +1254,7 @@ pub async fn convert_raw_to_wav(
     wav_file: &str,
     length: Option<u16>,
 ) -> Result<f64> {
-    println!("\nConverting raw file `{}` to wav:", raw_file);
+    info!("Converting raw file `{}` to wav:", raw_file);
 
     let mut args = [
         "run",
@@ -1316,7 +1317,7 @@ pub async fn convert_wav_to_16khz_mono(
     input_file: &str,
     output_file: &str,
 ) -> Result<()> {
-    println!("\nConverting file `{}` to 16kHz/mono wav:", input_file);
+    info!("Converting file `{}` to 16kHz/mono wav:", input_file);
 
     let args = [
         "run",
@@ -1342,7 +1343,7 @@ pub async fn convert_wav_to_16khz_mono(
 }
 
 pub async fn convert_mp4_to_yuv(location: &str, mp4_file: &str, yuv_file: &str) -> Result<()> {
-    println!("\nConverting `{mp4_file}` to YUV:");
+    info!("Converting `{mp4_file}` to YUV:");
 
     let args = [
         "run",
@@ -1369,7 +1370,7 @@ pub async fn convert_yuv_to_mp4(
     mp4_file: &str,
     dimensions: (u16, u16),
 ) -> Result<()> {
-    println!("\nConverting `{yuv_file}` to MP4:");
+    info!("Converting `{yuv_file}` to MP4:");
 
     let args = [
         "run",
@@ -1395,7 +1396,7 @@ pub async fn convert_yuv_to_mp4(
 }
 
 pub async fn generate_spectrogram(location: &str, wav_file: &str, extension: &str) -> Result<()> {
-    println!("\nGenerating spectrogram for `{}`:", wav_file);
+    info!("Generating spectrogram for `{}`:", wav_file);
 
     let _ = Command::new("docker")
         .args([
@@ -1432,7 +1433,7 @@ pub async fn analyze_visqol_mos(
     extension: &str,
     speech: bool,
 ) -> Result<()> {
-    println!("\nAnalyzing visqol mos for `{}`:", degraded_file);
+    info!("Analyzing visqol mos for `{}`:", degraded_file);
 
     let mut args = [
         "run",
@@ -1490,7 +1491,7 @@ pub async fn analyze_pesq_mos(
     ref_file: &str,
     extension: &str,
 ) -> Result<()> {
-    println!("\nAnalyzing pesq mos for `{}`:", degraded_file);
+    info!("Analyzing pesq mos for `{}`:", degraded_file);
 
     let args = [
         "run",
@@ -1540,7 +1541,7 @@ pub async fn analyze_plc_mos(
     degraded_file: &str,
     extension: &str,
 ) -> Result<()> {
-    println!("\nAnalyzing plc mos for `{}`:", degraded_file);
+    info!("Analyzing plc mos for `{}`:", degraded_file);
 
     let args = [
         "run",
@@ -1590,7 +1591,7 @@ pub async fn analyze_video(
     ref_file: &str,
     dimensions: (u16, u16),
 ) -> Result<()> {
-    println!("\nAnalyzing video for `{}`:", degraded_file);
+    info!("Analyzing video for `{}`:", degraded_file);
 
     let _ = Command::new("docker")
         .args([
@@ -1766,7 +1767,7 @@ impl DockerStats {
                                                 (tx_bitrate, rx_bitrate)
                                             }
                                             None => {
-                                                println!("Error: stat missing eth0!");
+                                                error!("Error: stat missing eth0!");
                                                 break;
                                             }
                                         };
@@ -1806,20 +1807,20 @@ impl DockerStats {
                                         prev_system_cpu_usage = system_cpu_usage;
                                     }
                                     _ => {
-                                        println!("Error: stat missing required data!");
+                                        error!("Error: stat missing required data!");
                                         break;
                                     }
                                 }
                             }
                             Err(err) => {
-                                println!("Error collecting stats for {}: {:?}", name, err);
+                                error!("Error collecting stats for {}: {:?}", name, err);
                                 break;
                             }
                         }
                     }
                 }
                 Err(err) => {
-                    println!("Error creating stats file: {:?}", err);
+                    error!("Error creating stats file: {:?}", err);
                 }
             }
         });

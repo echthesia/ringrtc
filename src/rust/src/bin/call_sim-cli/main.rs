@@ -265,7 +265,10 @@ fn main() -> Result<()> {
         .level(LevelFilter::Debug);
 
     if let Some(log_file) = args.log_file {
-        fern_logger.chain(fern::log_file(log_file)?).apply()?;
+        fern_logger
+            .chain(std::io::stdout())
+            .chain(fern::log_file(log_file)?)
+            .apply()?;
     } else {
         fern_logger.chain(std::io::stdout()).apply()?;
     }

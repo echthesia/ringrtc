@@ -20,6 +20,7 @@ use calling::{
     CommandMessage, Empty, command_message::Command, test_management_client::TestManagementClient,
 };
 use chrono::{DateTime, Local};
+use log::{error, info};
 use relative_path::RelativePath;
 use tonic::transport::Channel;
 use tower::timeout::Timeout;
@@ -199,8 +200,8 @@ impl Test {
 
         let set_path = set_path.display().to_string();
 
-        println!("\nRunning test set: {}", set_name);
-        println!("  Using path: {}", set_path);
+        info!("Running test set: {}", set_name);
+        info!("Using path: {}", set_path);
 
         Ok(Self {
             time_started,
@@ -253,9 +254,9 @@ impl Test {
         // Sleep here to allow the server(s) to get running.
         tokio::time::sleep(Duration::from_secs(1)).await;
 
-        println!("Connecting to test manager...");
+        info!("Connecting to test manager...");
         let mut test_manager = self.start_test_manager_client().await?;
-        println!("Starting clients...");
+        info!("Starting clients...");
 
         // Sign-up for notifications from the signaling server.
         let request = tonic::Request::new(Empty {});
@@ -288,7 +289,7 @@ impl Test {
                 start_tcpdump(test_case.client_b.name, &test_case.test_path).await?;
             }
 
-            println!();
+            info!("\n");
 
             start_cli(
                 test_case.client_a.name,
@@ -336,7 +337,7 @@ impl Test {
             )
             .await?;
 
-            println!("Waiting for clients...");
+            info!("Waiting for clients...");
 
             let mut done = false;
             loop {
@@ -345,7 +346,7 @@ impl Test {
                         // We wait for both clients to indicate that they are ready and already
                         // registered with the relay server.
                         if !done && event.ready_count == 2 {
-                            println!("\nRunning test...");
+                            info!("Running test...");
 
                             let mut network_configs = network_configs.iter();
                             let mut timed_config_next = network_configs.next();
@@ -354,7 +355,7 @@ impl Test {
                             if let Some(timed_network_config) = timed_config_next
                                 && timed_network_config.offset == Duration::from_secs(0)
                             {
-                                println!("  Setting up network emulation.");
+                                info!("  Setting up network emulation.");
                                 emulate_network_start(
                                     test_case.client_a.name,
                                     &timed_network_config.network_config,
@@ -405,7 +406,7 @@ impl Test {
 
                             test_manager.send_command(request).await?;
 
-                            println!("\nWaiting for the test to complete...");
+                            info!("Waiting for the test to complete...");
 
                             // Yield for a moment to let connections be made.
                             thread::sleep(Duration::from_millis(100));
@@ -469,7 +470,7 @@ impl Test {
                                         // emulation shouldn't change more than once every 2 seconds!
 
                                         let _ = tokio::join!(join_handle_a, join_handle_b);
-                                        eprintln!(" Done.");
+                                        error!(" Done.");
                                     });
 
                                     emulation_started = true;
@@ -496,25 +497,25 @@ impl Test {
 
                             done = true;
 
-                            println!("\r  Test complete.");
-                            println!("\nWaiting for the clients to terminate...");
+                            info!("Test complete.");
+                            info!("Waiting for the clients to terminate...");
                         } else if done && event.ready_count == 0 {
-                            println!("  Done.");
+                            info!("  Done.");
                             break;
                         }
                     }
                     Ok(None) => {
-                        println!("Received Message: None");
+                        info!("Received Message: None");
                         break;
                     }
                     Err(err) => {
-                        println!("Error: {}", err);
+                        error!("Error: {}", err);
                         break;
                     }
                 }
             }
         } else {
-            println!("Could not send notification() message: {:?}", response);
+            error!("Could not send notification() message: {:?}", response);
         }
 
         Ok(())
@@ -844,15 +845,15 @@ impl Test {
                     tear_down_virtual_audio(&vec![test_case.client_a.name, test_case.client_b.name])
                         .await
                 {
-                    println!("Couldn't tear down audio; continuing. {:?}", e);
+                    error!("Couldn't tear down audio; continuing. {:?}", e);
                 }
                 if self.profile {
                     // allow perf to finish and collect reports.
-                    println!("waiting for perf... ");
+                    info!("waiting for perf... ");
                     if let Err(e) = finish_perf(test_case.client_b.name).await {
-                        println!("couldn't wait for perf {:?}", e);
+                        error!("couldn't wait for perf {:?}", e);
                     }
-                    println!("... done");
+                    info!("... done");
                 }
 
                 // For debugging, dump the signaling_server logs.
@@ -890,24 +891,24 @@ impl Test {
                         {
                             Ok(report) => Ok(report),
                             Err(err) => {
-                                println!("Error generating test report: {}", err);
+                                error!("Error generating test report: {}", err);
                                 Err(err)
                             }
                         }
                     }
                     Err(err) => {
-                        println!("Error generating artifacts: {}", err);
+                        error!("Error generating artifacts: {}", err);
                         Err(err)
                     }
                 }
             }
             Err(err) => {
-                println!("Error running test: {}", err);
+                error!("Error running test: {}", err);
                 if let Err(e) =
                     tear_down_virtual_audio(&vec![test_case.client_a.name, test_case.client_b.name])
                         .await
                 {
-                    println!("Couldn't tear down audio; continuing. {:?}", e);
+                    error!("Couldn't tear down audio; continuing. {:?}", e);
                 }
                 clean_up(vec![
                     test_case.client_a.name,
@@ -963,13 +964,13 @@ impl Test {
                     );
 
                     let test_case_path = if test.iterations > 1 {
-                        println!("\nRunning test case: {}, iteration: {}", report_name, i);
+                        info!("Running test case: {}, iteration: {}", report_name, i);
                         format!(
                             "{}/{}/{}_{}",
                             self.set_path, group_config.group_name, report_name, i
                         )
                     } else {
-                        println!("\nRunning test case: {}", report_name);
+                        info!("Running test case: {}", report_name);
                         format!(
                             "{}/{}/{}",
                             self.set_path, group_config.group_name, report_name

@@ -1994,7 +1994,7 @@ DEALINGS IN THE SOFTWARE.
 
 ```
 
-## bitflags 1.3.2, bitflags 2.11.0, log 0.4.29, regex-automata 0.4.14, regex-syntax 0.8.10, regex 1.12.3
+## bitflags 1.3.2, bitflags 2.11.0, log 0.4.33, regex-automata 0.4.14, regex-syntax 0.8.10, regex 1.12.3
 
 ```
 Copyright (c) 2014 The Rust Project Developers

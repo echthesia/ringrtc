@@ -7,6 +7,7 @@ use std::{collections::HashMap, fmt::Write, str::FromStr};
 
 use anyhow::{Result, anyhow};
 use itertools::Itertools;
+use log::{error, info};
 use plotters::{
     backend::SVGBackend,
     chart::ChartBuilder,
@@ -1712,7 +1713,7 @@ impl Report {
             let stats = stats.clone();
             set.spawn_blocking(move || {
                 if let Err(err) = Report::create_line_chart(&path, &stats) {
-                    println!("create_line_chart() error: {}", err);
+                    error!("create_line_chart() error: {}", err);
                 }
             });
         }
@@ -1997,7 +1998,7 @@ impl Report {
             .await?;
 
         if let Err(err) = file.write_all(buf.as_slice()).await {
-            println!("Error writing file! {err}");
+            error!("Error writing file! {err}");
         }
 
         Ok(())
@@ -2339,7 +2340,7 @@ impl Report {
         group_reports: &[GroupRun],
         sounds: &HashMap<String, Sound>,
     ) -> Result<()> {
-        println!("\nCreating summary report for {}", set_name);
+        info!("Creating summary report for {}", set_name);
 
         let mut buf = vec![];
         let html = Html::new();
@@ -2422,7 +2423,7 @@ impl Report {
                 );
 
                 if let Err(err) = Report::create_bar_chart(set_path, &stats, domain, data) {
-                    println!("create_line_chart() error: {}", err);
+                    error!("create_line_chart() error: {}", err);
                 }
 
                 stats_charts.push(stats);
@@ -2501,7 +2502,7 @@ impl Report {
             .await?;
 
         if let Err(err) = file.write_all(buf.as_slice()).await {
-            println!("Error writing file! {err}");
+            error!("Error writing file! {err}");
         }
 
         Ok(())
@@ -3664,9 +3665,7 @@ impl Html {
                                 }
                             } else {
                                 // This would be a bad state, warn and reset.
-                                println!(
-                                    "There are summary_lines but averaged_summary_line is None!"
-                                );
+                                info!("There are summary_lines but averaged_summary_line is None!");
                                 summary_rows.clear();
                                 aggregate_summary_row = None;
                                 iteration_count_for_group += 1;

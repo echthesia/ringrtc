@@ -7,6 +7,7 @@ use std::{ffi::OsStr, path::Path};
 
 use anyhow::Result;
 use itertools::Itertools;
+use log::{error, info};
 
 use crate::{
     common::AudioConfig,
@@ -28,7 +29,7 @@ pub fn chop_audio(
     ref_path: &str,
     ref_file: &str,
 ) -> Result<ChopAudioResult> {
-    println!("\nChopping audio for `{}`:", degraded_file);
+    info!("Chopping audio for `{}`:", degraded_file);
 
     let reference = hound::WavReader::open(format!("{}/{}", ref_path, ref_file))?;
     let reference_time_secs = reference.duration() / reference.spec().sample_rate;
@@ -62,7 +63,7 @@ pub fn chop_audio(
             if let Ok(sample) = sample {
                 writer.write_sample(sample)?;
             } else {
-                eprintln!("Error: sample was invalid for {}!", output_name);
+                error!("Error: sample was invalid for {}!", output_name);
                 break;
             }
         }
@@ -127,7 +128,7 @@ pub async fn chop_audio_and_analyze(
             {
                 data.push(mos);
             } else {
-                eprintln!("Error: mos value is missing for {}!", degraded_file);
+                error!("Error: mos value is missing for {}!", degraded_file);
                 data.push(0f32);
             }
         }
@@ -184,7 +185,7 @@ pub async fn chop_audio_and_analyze(
                 {
                     data.push(mos);
                 } else {
-                    eprintln!("Error: mos value is missing for {}!", degraded_file);
+                    error!("Error: mos value is missing for {}!", degraded_file);
                     data.push(0f32);
                 }
             }
@@ -232,7 +233,7 @@ pub async fn chop_audio_and_analyze(
                 {
                     data.push(mos);
                 } else {
-                    eprintln!("Error: mos value is missing for {}!", degraded_file);
+                    error!("Error: mos value is missing for {}!", degraded_file);
                     data.push(0f32);
                 }
             }
@@ -273,7 +274,7 @@ pub async fn chop_audio_and_analyze(
                 {
                     data.push(mos);
                 } else {
-                    eprintln!("Error: mos value is missing for {}!", degraded_file);
+                    error!("Error: mos value is missing for {}!", degraded_file);
                     data.push(0f32);
                 }
             }
