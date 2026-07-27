@@ -6,14 +6,20 @@
 //! Utility functions for audio_device_module.rs
 //! Nothing in here should depend on webrtc directly.
 
-use std::ffi::{CString, c_uchar};
+use std::{
+    borrow::Cow,
+    ffi::{CString, c_uchar},
+    sync::LazyLock,
+};
 
 use anyhow::anyhow;
 use cubeb::{DeviceCollection, DeviceState};
 #[cfg(target_os = "linux")]
 use cubeb_core::DeviceType;
 use cubeb_core::{DeviceId, DevicePref};
-use regex::Regex;
+
+type StaticRegex =
+    regex_automata::dfa::regex::Regex<regex_automata::dfa::sparse::DFA<&'static [u8]>>;
 
 use crate::{webrtc, webrtc::peer_connection_factory::AudioDevice};
 
@@ -247,8 +253,9 @@ pub fn copy_and_truncate_string(
     Ok(())
 }
 
-/// Redact the given string |s| by retaining only a prefix, which is 4 characters
-/// if the string is all ASCII and 1 otherwise.
+/// Redact the given string |s| by retaining only a brief prefix and suffix, to match
+/// Desktop's truncateForLogging format.
+/// If the string contains unicode, only output one character.
 pub fn redact_for_logging(s: &str) -> String {
     if cfg!(debug_assertions) && !cfg!(test) {
         // For debug testing/local builds only, allow the full string.
@@ -257,43 +264,231 @@ pub fn redact_for_logging(s: &str) -> String {
         // Take a small number of characters, but fewer if they are non-ascii unicode, as
         // unicode provides a substantially higher amount of information per char.
         // (e.g. four mandarin characters could be a full name)
-        let mut out: String = if s.is_ascii() {
-            s.chars().take(4).collect()
-        } else {
-            s.chars().take(1).collect()
-        };
-        if out != s {
+        let out: String = if s.is_ascii() {
+            let n = s.chars().by_ref().count();
+            if n <= 4 {
+                return s.to_string();
+            }
+            let mut chars = s.chars();
+            let mut out: String = chars.by_ref().take(2).collect();
             out.push_str("...");
-        }
+            // n - 4 because we're reusing the iterator we took 2 from
+            out.extend(chars.skip(n - 4));
+            out
+        } else {
+            if s.chars().count() <= 1 {
+                return s.to_string();
+            }
+            s.chars().take(1).chain("...".chars()).collect()
+        };
         out
     }
 }
 
-/// Redact all capturing groups (except group 0) with |redact_for_logging|
-/// if the regex matches. Otherwise, return None.
-pub fn redact_by_regex(re: &Regex, s: &str) -> Option<String> {
-    if re.is_match(s) {
-        Some(
-            re.replace(s, |caps: &regex::Captures| {
-                let mut out = s.to_string();
-                // Skip group 0 (the entire match)
-                for group in caps.iter().skip(1).flatten() {
-                    out = out.replace(group.as_str(), &redact_for_logging(group.as_str()));
-                }
-                out
-            })
-            .to_string(),
-        )
-    } else {
-        None
+// clippy sees that StaticRegex is "at least 1440 bytes", which could be much
+// larger than the &'static str, and thus the enum must be at least 1440 bytes.
+// In our case, we only ever have a small handful of these enums (less than 10),
+// so the overhead in terms of amount of memory is quite small, and not worth the
+// overhead of allocating additional memory, e.g. with a Box.
+// https://rust-lang.github.io/rust-clippy/rust-1.91.0/index.html#large_enum_variant
+#[allow(clippy::large_enum_variant)]
+pub enum AppliesToLine {
+    Regex(StaticRegex), // we require a regex to see if the line is of interest
+    LiteralPrefix(&'static str), // we can determine if the line is of interest by simple string comparison
+}
+pub struct RedactionSpec {
+    /// Should we redact the given line?
+    ///
+    /// For cubeb, which may truncate lines that are too long, this should generally identify a
+    /// prefix of the relevant log line(s) such that if the regex matches, it is likely we want to
+    /// redact the line, and if it fails to match, we know we do not need to (e.g. because cubeb
+    /// truncated the line before handing it to us and happened to remove any sensitive content).
+    pub applies_to_line: AppliesToLine,
+    /// An **ordered** list of the segments to **keep**.
+    /// That is to say, for each i from 0 to segments_to_keep.len() - 1,
+    /// redact_for_logging the substring between the end of
+    /// segments_to_keep[i] and the start of segments_to_keep[i + 1].
+    /// Additionally, redact_for_logging the substring from 0 to the start of segments_to_keep[0],
+    /// and from the end of the last matching segment to the end of the string.
+    /// If segments_to_keep has any elements that do not match, fail conservatively by treating it
+    /// as if we have gotten to the last segment in the list, and redact the rest of the string
+    /// (An individual segment may not match if the input was truncated by cubeb, for example)
+    pub segments_to_keep: Vec<StaticRegex>,
+}
+
+impl RedactionSpec {
+    pub fn redact_if_matching<'a>(&self, text: Cow<'a, str>) -> Cow<'a, str> {
+        // bail early in the likely case that this filter is irrelevant
+        let applies = match &self.applies_to_line {
+            AppliesToLine::Regex(re) => re.is_match(text.as_bytes()),
+            AppliesToLine::LiteralPrefix(s) => text.starts_with(s),
+        };
+        if !applies {
+            return text;
+        }
+
+        let mut result = String::new();
+        let mut end_of_previous_match = 0;
+
+        for segment_re in self.segments_to_keep.iter() {
+            let Some(m) = segment_re.find(&text.as_bytes()[end_of_previous_match..]) else {
+                error!("bailing early when redacting string");
+                break;
+            };
+            // Add back the offset
+            let start = m.start() + end_of_previous_match;
+            let end = m.end() + end_of_previous_match;
+
+            // We have found a substring that is not in |segments_to_keep|, redact it.
+            if start != end_of_previous_match {
+                result.push_str(&redact_for_logging(&text[end_of_previous_match..start]));
+            }
+            result.push_str(&text[start..end]);
+
+            end_of_previous_match = end;
+        }
+
+        if end_of_previous_match != text.len() {
+            // we must also redact the end of the string
+            result.push_str(&redact_for_logging(&text[end_of_previous_match..]))
+        }
+
+        result.into()
     }
+}
+
+pub fn cubeb_redaction_specs() -> &'static Vec<RedactionSpec> {
+    // These patterns describe the places friendly_name, device_id, and group_id are logged,
+    // for the backends where those are potentially sensitive.
+    //
+    // The capture groups will be redacted.
+    //
+    // Note that there's another one that isn't here: cubeb.c logs something like:
+    //   LOG("DeviceID: \"%s\"%s\n"
+    //       "\tName:\t\"%s\"\n"
+    //       ...
+    // But we just ignore this line altogether.
+    static REDACTION_RES: LazyLock<Vec<RedactionSpec>> = LazyLock::new(|| {
+        let mut out = Vec::new();
+        if cfg!(target_os = "windows") || cfg!(test) {
+            // cubeb_wasapi.cpp: wasapi_find_bt_handsfree_output_device
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::LiteralPrefix("Found matching device for "),
+                segments_to_keep: vec![
+                    regex_aot::regex!(r"Found matching device for "),
+                    regex_aot::regex!(": "),
+                ],
+            });
+            // cubeb_wasapi.cpp: wasapi_collection_notification_client::OnDefaultDeviceChanged
+            // This line ends with a single period. we don't need to redact that, but it's not
+            // a helpful part of the name, either.
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::LiteralPrefix(
+                    r"collection: Audio device default changed, id = ",
+                ),
+                segments_to_keep: vec![
+                    regex_aot::regex!(r"collection: Audio device default changed, id = "),
+                    regex_aot::regex!(r"\.$"),
+                ],
+            });
+            // cubeb_wasapi.cpp: wasapi_endpoint_notification_client::OnDefaultDeviceChanged
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::Regex(regex_aot::regex!(
+                    r"endpoint: Audio device default changed flow=.* role=.* new_device_id=.*"
+                )),
+                segments_to_keep: vec![
+                    regex_aot::regex!(
+                        r"endpoint: Audio device default changed flow=.* role=.* new_device_id="
+                    ),
+                    regex_aot::regex!(r"\.$"),
+                ],
+            });
+            // cubeb_wasapi.cpp: wasapi_collection_notification_client::OnDeviceStateChanged
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::LiteralPrefix(
+                    r"collection: Audio device state changed, id = ",
+                ),
+                segments_to_keep: vec![
+                    regex_aot::regex!(r"collection: Audio device state changed, id = "),
+                    regex_aot::regex!(", state =.*"),
+                ],
+            });
+        }
+        if cfg!(target_os = "macos") || cfg!(test) {
+            // cubeb-coreaudio-rs src/backend/mod.rs audiounit_get_devices_of_type
+            // See unit test redact_cubeb_strings for an example
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::Regex(regex_aot::regex!(r"Device \d+ \(.*")),
+                segments_to_keep: vec![
+                    regex_aot::regex!(r"Device \d+ \("),
+                    regex_aot::regex!(r"\) has \d+.*channels"),
+                ],
+            });
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::LiteralPrefix(
+                    "Cannot get the channel count for device ",
+                ),
+                segments_to_keep: vec![
+                    regex_aot::regex!(r"Cannot get the channel count for device \d+ \("),
+                    regex_aot::regex!(r"\)\. Ignored\."),
+                ],
+            });
+            // cubeb-coreaudio-rs src/backend/mod.rs should_block_vpio_for_device_pair
+            // See unit test redact_cubeb_strings for an example
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::Regex(regex_aot::regex!("(Input|Output) uid=")),
+                segments_to_keep: vec![
+                    regex_aot::regex!("(Input|Output) uid=\""),
+                    regex_aot::regex!("\", model_uid=\""),
+                    regex_aot::regex!("\", transport_type=.*, source=.*, source_name=\""),
+                    regex_aot::regex!("\", name=\""),
+                    regex_aot::regex!("\", manufacturer=\".*\""),
+                ],
+            });
+        }
+        if cfg!(target_os = "linux") || cfg!(test) {
+            // cubeb-pulse-rs context.rs server_info_cb::sink_info_cb
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::LiteralPrefix(
+                    "PulseAudio default sink info: name=",
+                ),
+                segments_to_keep: vec![
+                    regex_aot::regex!("PulseAudio default sink info: name="),
+                    regex_aot::regex!(", description="),
+                    regex_aot::regex!(r", driver=.*, latency=\d+"),
+                ],
+            });
+            // cubeb-pulse-rs context.rs server_info_cb
+            out.push(RedactionSpec {
+                applies_to_line: AppliesToLine::Regex(regex_aot::regex!(
+                    r"PulseAudio server info: server_name=.*, default_sink_name="
+                )),
+                segments_to_keep: vec![
+                    regex_aot::regex!(
+                        r"PulseAudio server info: server_name=.*, default_sink_name="
+                    ),
+                    regex_aot::regex!(", default_source_name="),
+                ],
+            });
+        }
+        out
+    });
+
+    &REDACTION_RES
+}
+
+pub fn do_cubeb_redactions(text: Cow<str>) -> Cow<str> {
+    let mut redacted = text;
+    for re in cubeb_redaction_specs().iter() {
+        redacted = re.redact_if_matching(redacted);
+    }
+    redacted
 }
 
 #[cfg(test)]
 mod audio_device_module_tests {
     #[cfg(target_os = "linux")]
     use cubeb_core::DeviceType;
-    use lazy_static::lazy_static;
 
     use super::*;
     #[test]
@@ -380,46 +575,235 @@ mod audio_device_module_tests {
 
     #[test]
     fn redaction_tests() {
-        assert_eq!(redact_for_logging("0123456789"), "0123...");
+        assert_eq!(redact_for_logging("0123456789"), "01...89");
         assert_eq!(redact_for_logging("0123"), "0123");
         assert_eq!(redact_for_logging("0"), "0");
         assert_eq!(redact_for_logging("你好"), "你..."); // ni hao (hello)
         assert_eq!(redact_for_logging("你"), "你");
+        // This is not necessarily behavior we want to enforce, but the test is here for
+        // documentation of the limitations of this implementation:
+        // the string y̆, which looks like one character to humans, is represented as
+        // two Unicode Scalar Values: y and \u{0306}.
+        // Rust's standard library does not provide functionality to iterate by "grapheme clusters."
+        //
+        // While we could get such a library from crates.io, it would require us to build in a
+        // (large) unicode table to the compiled library.
+        assert_eq!(redact_for_logging("y̆ is from rust str docs"), "y...");
     }
 
     #[test]
     fn redaction_regex_tests() {
-        lazy_static! {
-            static ref ONE_RE: Regex =
-                Regex::new(r"Device \d+ \((.*)\) has \d+.*channels").unwrap();
-            static ref TWO_RE: Regex = Regex::new(r"Found matching device for (.*): (.*)").unwrap();
-        }
+        let re1 = RedactionSpec {
+            applies_to_line: AppliesToLine::Regex(regex_aot::regex!(r"Device \d+ \(.*")),
+            segments_to_keep: vec![
+                regex_aot::regex!(r"Device \d+ \("),
+                regex_aot::regex!(r"\) has \d+.*channels"),
+            ],
+        };
+
         assert_eq!(
-            redact_by_regex(
-                &ONE_RE,
-                "Device 12345 (My Super Sensitive Name) has 2 INPUT-channels"
+            re1.redact_if_matching(
+                "Device 12345 (My Super Sensitive Name) has 2 INPUT-channels".into()
             ),
-            Some("Device 12345 (My S...) has 2 INPUT-channels".to_string())
+            "Device 12345 (My...me) has 2 INPUT-channels"
         );
+
         // Should only redact matching strings
         assert_eq!(
-            redact_by_regex(&ONE_RE, "Some other string with My Super Sensitive Name"),
-            None
+            re1.redact_if_matching("Some other string with My Super Sensitive Name".into()),
+            "Some other string with My Super Sensitive Name"
         );
+
+        let re2 = RedactionSpec {
+            applies_to_line: AppliesToLine::LiteralPrefix("Found matching device for "),
+            segments_to_keep: vec![
+                regex_aot::regex!(r"Found matching device for "),
+                regex_aot::regex!(": "),
+            ],
+        };
         assert_eq!(
-            redact_by_regex(
-                &TWO_RE,
-                "Found matching device for My Super Sensitive Name: My Super Sensitive Name"
+            re2.redact_if_matching(
+                "Found matching device for My Super Sensitive Name: My Super Sensitive Name".into()
             ),
-            Some("Found matching device for My S...: My S...".to_string())
+            "Found matching device for My...me: My...me"
         );
+
         assert_eq!(
-            redact_by_regex(
-                &TWO_RE,
-                "Found matching device for My Super Sensitive Name: My Other Sensitive Name"
+            re2.redact_if_matching(
+                "Found matching device for My Super Sensitive Name: My Other Sensitive Name".into()
             ),
-            Some("Found matching device for My S...: My O...".to_string())
+            "Found matching device for My...me: My...me"
         );
+
+        let re3 = RedactionSpec {
+            applies_to_line: AppliesToLine::LiteralPrefix(
+                r"collection: Audio device default changed, id = ",
+            ),
+            segments_to_keep: vec![
+                regex_aot::regex!(r"collection: Audio device default changed, id = "),
+                regex_aot::regex!(",$"),
+            ],
+        };
+        assert_eq!(
+            re3.redact_if_matching(
+                // note that the comma at the end is not preserved
+                "collection: Audio device default changed, id = TestOneTwo,".into()
+            ),
+            // Note that there's no comma at the end
+            "collection: Audio device default changed, id = Te...wo,"
+        );
+
+        let re4 = RedactionSpec {
+            applies_to_line: AppliesToLine::Regex(regex_aot::regex!(r".* is the sensitive part")),
+            segments_to_keep: vec![regex_aot::regex!(r" is the sensitive part")],
+        };
+        assert_eq!(
+            re4.redact_if_matching("Sensitive Name is the sensitive part".into()),
+            "Se...me is the sensitive part"
+        );
+    }
+
+    #[test]
+    fn redaction_regex_failure() {
+        let re1 = RedactionSpec {
+            applies_to_line: AppliesToLine::Regex(regex_aot::regex!(r"Device \d+ \(.*")),
+            segments_to_keep: vec![
+                regex_aot::regex!(r"Device \d+ \("),
+                // Deliberately missing a space before "has"
+                regex_aot::regex!(r"\)has \d+.*channels"),
+            ],
+        };
+        assert_eq!(
+            re1.redact_if_matching(
+                "Device 12345 (My Super Sensitive Name) has 2 INPUT-channels".into()
+            ),
+            // We'll take what we know is safe and truncate the rest.
+            "Device 12345 (My...ls"
+        );
+    }
+
+    #[test]
+    fn redact_unicode() {
+        let re1 = RedactionSpec {
+            applies_to_line: AppliesToLine::Regex(regex_aot::regex!(
+                r"endpoint: Audio device default changed flow=.* role=.* new_device_id=.*"
+            )),
+            segments_to_keep: vec![regex_aot::regex!(
+                r"endpoint: Audio device default changed flow=.* role=.* new_device_id="
+            )],
+        };
+
+        // Should not affect the y̆
+        assert_eq!(
+            re1.redact_if_matching("endpoint: Audio device default changed flow=y̆ is from rust str docs role=console new_device_id=Sensitive ASCII".into()),
+           "endpoint: Audio device default changed flow=y̆ is from rust str docs role=console new_device_id=Se...II"
+        );
+
+        let re2 = RedactionSpec {
+            applies_to_line: AppliesToLine::LiteralPrefix("Found matching device for "),
+            segments_to_keep: vec![
+                regex_aot::regex!(r"Found matching device for "),
+                regex_aot::regex!(": "),
+            ],
+        };
+        // Presence of unicode should cause that string to be redacted more strictly
+        assert_eq!(
+            re2.redact_if_matching(
+                "Found matching device for My é: My Other Sensitive Name".into()
+            ),
+            "Found matching device for M...: My...me"
+        );
+
+        // Should only apply stricter redaction to the one string
+        assert_eq!(
+            re2.redact_if_matching(
+                "Found matching device for Édouard Manet: My Other Sensitive Name".into()
+            ),
+            "Found matching device for É...: My...me"
+        );
+    }
+
+    // Makes sure that a "." doesn't lead to us cutting in the middle of a character boundary
+    #[test]
+    fn redact_regex_no_char_boundary_bug() {
+        let re = RedactionSpec {
+            applies_to_line: AppliesToLine::LiteralPrefix("A"),
+            segments_to_keep: vec![regex_aot::regex!("A.")],
+        };
+        assert_eq!(re.redact_if_matching("A你好你好".into()), "A你好...");
+    }
+
+    #[test]
+    fn redact_cubeb_strings() {
+        assert_eq!(
+            // This line shouldn't be redacted at all, so it shouldn't be affected by the grapheme cluster issue
+            do_cubeb_redactions("Some Line Not Matching With Unicode y̆ 你好".into()),
+            "Some Line Not Matching With Unicode y̆ 你好"
+        );
+
+        assert_eq!(
+            do_cubeb_redactions(
+                "Found matching device for Friendly Name: Other Friendly Name".into()
+            ),
+            "Found matching device for Fr...me: Ot...me"
+        );
+
+        assert_eq!(
+            do_cubeb_redactions("collection: Audio device default changed, id = {0.0.0.00000000}.{c9ddf6ba-2fad-406b-bddf-bded5b431800}".into()),
+            "collection: Audio device default changed, id = {0...0}"
+        );
+
+        assert_eq!(
+            do_cubeb_redactions("collection: Audio device state changed, id = {0.0.0.00000000}.{c9ddf6ba-2fad-406b-bddf-bded5b431800}, state = 4.".into()),
+            "collection: Audio device state changed, id = {0...0}, state = 4."
+        );
+
+        // This line is cut off early, but that should still work.
+        assert_eq!(
+            do_cubeb_redactions(
+                "collection: Audio device state changed, id = {0.0.0.00000000}.{c9ddf6ba-".into()
+            ),
+            "collection: Audio device state changed, id = {0...a-"
+        );
+
+        assert_eq!(
+            do_cubeb_redactions(
+                "endpoint: Audio device default changed flow=1 role=2 new_device_id={0.0.0.00000000}.{c9ddf6ba-2fad-406b-bddf-bded5b431800}.".into()
+            ),
+            "endpoint: Audio device default changed flow=1 role=2 new_device_id={0...0}."
+        );
+
+        assert_eq!(
+            do_cubeb_redactions("Device 92 (MacBook Pro Microphone) has 1 INPUT-channels".into()),
+            "Device 92 (Ma...ne) has 1 INPUT-channels"
+        );
+
+        assert_eq!(
+            do_cubeb_redactions(
+                "Cannot get the channel count for device 92 (MacBook Pro Microphone). Ignored."
+                    .into()
+            ),
+            "Cannot get the channel count for device 92 (Ma...ne). Ignored."
+        );
+
+        // If we see a cut-off line in the middle of a regex that should truncate the rest of the line
+        assert_eq!(
+            do_cubeb_redactions(
+                "Cannot get the channel count for device 92 (MacBook Pro Microphone). Igno".into()
+            ),
+            "Cannot get the channel count for device 92 (Ma...no"
+        );
+
+        assert_eq!(
+            do_cubeb_redactions(r#"Output uid="BuiltInHeadphoneOutputDevice", model_uid="Codec Output", transport_type="bltn", source="hdpn", source_name="External Headphones", name="External Headphones", manufacturer="Apple Inc.""#.into()),
+           r#"Output uid="Bu...ce", model_uid="Co...ut", transport_type="bltn", source="hdpn", source_name="Ex...es", name="Ex...es", manufacturer="Apple Inc.""#
+        );
+
+        assert_eq!(do_cubeb_redactions("PulseAudio server info: server_name=PulseAudio (on PipeWire 1.4.2), server_version=15.0.0, default_sink_name=alsa_output.pci-0000_64_00.6.HiFi__Headphones__sink, default_source_name=alsa_input.pci-0000_64_00.6.HiFi__Mic1__source".into()),
+        "PulseAudio server info: server_name=PulseAudio (on PipeWire 1.4.2), server_version=15.0.0, default_sink_name=al...nk, default_source_name=al...ce");
+
+        assert_eq!(do_cubeb_redactions("PulseAudio default sink info: name=alsa_output.pci-0000_64_00.6.HiFi__Speaker__sink, description=Ryzen HD Audio Controller Speaker, driver=PipeWire, latency=0".into()),
+        "PulseAudio default sink info: name=al...nk, description=Ry...er, driver=PipeWire, latency=0");
     }
 
     #[test]

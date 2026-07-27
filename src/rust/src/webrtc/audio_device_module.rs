@@ -21,8 +21,6 @@ use std::{
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use cubeb::{Context, DeviceId, MonoFrame, StereoFrame, Stream, StreamPrefs};
 use cubeb_core::{InputProcessingParams, LogLevel, log_enabled, set_logging};
-use lazy_static::lazy_static;
-use regex::Regex;
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Com;
 
@@ -30,7 +28,8 @@ use crate::{
     webrtc,
     webrtc::{
         audio_device_module_utils::{
-            DeviceCollectionWrapper, copy_and_truncate_string, redact_by_regex, redact_for_logging,
+            DeviceCollectionWrapper, copy_and_truncate_string, do_cubeb_redactions,
+            redact_for_logging,
         },
         peer_connection_factory::{AudioDevice, AudioDeviceObserver},
     },
@@ -1053,35 +1052,6 @@ impl Drop for LogDisableGuard {
 }
 
 fn log_c_str(s: &CStr) {
-    lazy_static! {
-        static ref LINE_RE: Regex = Regex::new(r"(?<ident>[^\s]+:\d+)(?<message>.*)").unwrap();
-    }
-    // These patterns describe the places friendly_name, device_id, and group_id are logged,
-    // for the backends where those are potentially sensitive.
-    //
-    // The capture groups will be redacted.
-    //
-    // Note that there's another one that isn't here: cubeb.c logs something like:
-    //   LOG("DeviceID: \"%s\"%s\n"
-    //       "\tName:\t\"%s\"\n"
-    //       ...
-    // But we just ignore this line altogether.
-    lazy_static! {
-        static ref REDACTION_RES: Vec<Regex> = vec![
-            // cubeb_wasapi.cpp: wasapi_find_bt_handsfree_output_device
-            Regex::new(r"Found matching device for (.*): (.*)").unwrap(),
-            // cubeb_wasapi.cpp: wasapi_collection_notification_client::OnDefaultDeviceChanged
-            Regex::new(r"collection: Audio device default changed, id = (.*)\.").unwrap(),
-            // cubeb_wasapi.cpp: wasapi_collection_notification_client::OnDeviceStateChanged
-            Regex::new(r"collection: Audio device state changed, id = (.*), state = .*\.").unwrap(),
-            // cubeb_wasapi.cpp: wasapi_endpoint_notification_client::OnDefaultDeviceChanged
-            Regex::new(r"endpoint: Audio device default changed flow=.* role=.* new_device_id=(.*)\.").unwrap(),
-            // cubeb-coreaudio-rs src/backend/mod.rs audiounit_get_devices_of_type
-            Regex::new(r"Device \d+ \((.*)\) has \d+.*channels").unwrap(),
-            // cubeb-coreaudio-rs src/backend/mod.rs should_block_vpio_for_device_pair
-            Regex::new(r#".* uid="(.*)", model_uid="(.*)", transport_type=.*, source=.*, source_name="(.*)", name="(.*)", manufacturer=".*""#).unwrap(),
-        ];
-    }
     if PAUSE_LOGGING.load(Ordering::SeqCst) {
         return;
     }
@@ -1097,25 +1067,15 @@ fn log_c_str(s: &CStr) {
 
             // Assume valid lines are formatted "file:lineno" and ignore anything
             // not matching
-            let Some(caps) = LINE_RE.captures(msg) else {
+            let identifier_re = regex_aot::regex!(r"[^\s]+:\d+");
+
+            let Some(m) = identifier_re.find(msg) else {
                 return;
             };
-            let ident = &caps["ident"];
-            let contents = &caps["message"];
+            let ident = &msg[m.start()..m.end()];
+            let contents = &msg[m.end()..];
 
-            let to_log = if cfg!(debug_assertions) {
-                contents.to_string()
-            } else {
-                let mut out = contents.to_string();
-                for re in REDACTION_RES.iter() {
-                    if let Some(new) = redact_by_regex(re, contents) {
-                        out = new;
-                        break;
-                    }
-                }
-                out
-            };
-            info!("cubeb: {}{}", ident, to_log);
+            info!("cubeb: {ident}{}", do_cubeb_redactions(contents.into()));
         }
         Err(e) => {
             warn!("cubeb log message not UTF-8: {:?}", e);
