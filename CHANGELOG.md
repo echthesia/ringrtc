@@ -1,5 +1,19 @@
 # Changelog
 
+## v2.70.1
+
+- Build / test: Remove unused methods for call simulator
+
+- Build / test: Fix webrtc unit test execution
+
+- Fix VP9 flag handling in Android
+
+- Update stats reporter to log correct remote_fraction_lost
+
+- Update call sim logging format and send call sim cli logs to stdout
+
+- Desktop: Improve cubeb log redaction
+
 ## v2.70.0
 
 - Add asymmetric video codec support for 1:1 calls
