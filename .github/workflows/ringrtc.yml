@@ -108,6 +108,15 @@ jobs:
       matrix:
         os: [ubuntu-latest-4-cores, windows-latest-8-cores, macos-latest, ubuntu-24.04-arm64-4-cores]
     runs-on: ${{ matrix.os }}
+    outputs:
+      macos_size_bytes: ${{ steps.get_size.outputs.darwin_libringrtc-arm64_size }}
+      base_macos_size_bytes: ${{ steps.get_size.outputs.base_darwin_libringrtc-arm64_size }}
+      ubuntu_x64_size_bytes: ${{ steps.get_size.outputs.linux_libringrtc-x64_size }}
+      base_ubuntu_x64_size_bytes: ${{ steps.get_size.outputs.base_linux_libringrtc-x64_size }}
+      ubuntu_arm64_size_bytes: ${{ steps.get_size.outputs.linux_libringrtc-arm64_size }}
+      base_ubuntu_arm64_size_bytes: ${{ steps.get_size.outputs.base_linux_libringrtc-arm64_size }}
+      windows_size_bytes: ${{ steps.get_size.outputs.win32_libringrtc-x64_size }}
+      base_windows_size_bytes: ${{ steps.get_size.outputs.base_win32_libringrtc-x64_size }}
     defaults:
       run:
         shell: bash # as opposed to PowerShell
@@ -132,6 +141,29 @@ jobs:
       if: ${{ !startsWith(matrix.os, 'windows-') }}
     - run: bin/build-desktop --release --ringrtc-only --test-ringrtc-adm-utils
       if: ${{ startsWith(matrix.os, 'windows-') }}
+
+    - name: Get cached base sizes
+      id: cache-base
+      uses: actions/cache/restore@v6  # Read-only
+      with:
+        path: base_sizes.txt
+        key: ${{ matrix.os }}-sizes-${{ github.event.pull_request.base.sha }}
+      if: ${{ github.event_name == 'pull_request' }}
+
+    - name: Get size
+      id: get_size
+      env:
+        GENERATE_BASE: ${{ case( github.event_name == 'push', 'y', 'n') }}
+        BASE_PATH: 'base_sizes.txt'
+      run: ./bin/github-actions-helpers.sh output_desktop_size
+
+    - name: Save sizes for push
+      uses: actions/cache/save@v6
+      with:
+        path: base_sizes.txt
+        key: ${{ matrix.os }}-sizes-${{ github.event.after }}
+      if: ${{ github.event_name == 'push' }}
+
     - run: npm ci
       working-directory: src/node
     - run: npm run build
@@ -174,6 +206,11 @@ jobs:
   android:
     name: Android Build
     runs-on: ubuntu-latest-4-cores
+    outputs:
+      android_arm64_rffi_size_bytes: ${{ steps.get_size.outputs.android_arm64_rffi_size }}
+      base_android_arm64_rffi_size_bytes: ${{ steps.get_size.outputs.base_android_arm64_rffi_size }}
+      android_arm64_ringrtc_size_bytes: ${{ steps.get_size.outputs.android_arm64_ringrtc_size }}
+      base_android_arm64_ringrtc_size_bytes: ${{ steps.get_size.outputs.base_android_arm64_ringrtc_size }}
     steps:
     - name: Install protoc
       run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
@@ -186,6 +223,29 @@ jobs:
         java-version: 21
     - run: bin/fetch-artifact -p android
     - run: bin/build-aar --release --ringrtc-only
+
+    - name: Get cached base sizes
+      id: cache-base
+      uses: actions/cache/restore@v6  # Read-only
+      with:
+        path: base_sizes.txt
+        key: android-sizes-${{ github.event.pull_request.base.sha }}
+      if: ${{ github.event_name == 'pull_request' }}
+
+    - name: Get size
+      id: get_size
+      env:
+        GENERATE_BASE: ${{ case( github.event_name == 'push', 'y', 'n') }}
+        BASE_PATH: 'base_sizes.txt'
+        RINGRTC_ARCH: 'arm64'
+      run: ./bin/github-actions-helpers.sh output_android_size
+
+    - name: Save sizes for push
+      uses: actions/cache/save@v6
+      with:
+        path: base_sizes.txt
+        key: android-sizes-${{ github.event.after }}
+      if: ${{ github.event_name == 'push' }}
 
   ios:
     name: iOS Tests
@@ -205,3 +265,47 @@ jobs:
       working-directory: src/ios/SignalRingRTC
       env:
         TEST_RUNNER_RINGRTC_MAX_LOG_LEVEL: 2 # warnings only
+
+  ringrtc_size:
+    name: RingRTC Size comparison
+    runs-on: ubuntu-latest-4-cores
+    needs: [electron, android]
+    if: ${{ github.event_name == 'pull_request' }}
+
+    permissions:
+      contents: read
+      pull-requests: write  # to comment on the PR
+
+    steps:
+      - uses: actions/checkout@v6  # grab the script
+      - name: Generate report
+        id: generate_report
+        env:
+          MACOS_SIZE: ${{ needs.electron.outputs.macos_size_bytes }}
+          BASE_MACOS_SIZE: ${{ needs.electron.outputs.base_macos_size_bytes }}
+          UBUNTU_X64_SIZE: ${{ needs.electron.outputs.ubuntu_x64_size_bytes }}
+          BASE_UBUNTU_X64_SIZE: ${{ needs.electron.outputs.base_ubuntu_x64_size_bytes }}
+          UBUNTU_ARM64_SIZE: ${{ needs.electron.outputs.ubuntu_arm64_size_bytes }}
+          BASE_UBUNTU_ARM64_SIZE: ${{ needs.electron.outputs.base_ubuntu_arm64_size_bytes }}
+          WINDOWS_SIZE: ${{ needs.electron.outputs.windows_size_bytes }}
+          BASE_WINDOWS_SIZE: ${{ needs.electron.outputs.base_windows_size_bytes }}
+          ANDROID_ARM64_RFFI_SIZE: ${{ needs.android.outputs.android_arm64_rffi_size_bytes }}
+          BASE_ANDROID_ARM64_RFFI_SIZE: ${{ needs.android.outputs.base_android_arm64_rffi_size_bytes }}
+          ANDROID_ARM64_RINGRTC_SIZE: ${{ needs.android.outputs.android_arm64_ringrtc_size_bytes }}
+          BASE_ANDROID_ARM64_RINGRTC_SIZE: ${{ needs.android.outputs.base_android_arm64_ringrtc_size_bytes }}
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: ./bin/github-actions-helpers.sh print_table
+      - name: Find comment
+        uses: peter-evans/find-comment@v4
+        id: find-comment
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          body-includes: identifying_ringrtc_size_comment_string
+      - name: Post comment
+        uses: peter-evans/create-or-update-comment@v5
+        with:
+          body: ${{steps.generate_report.outputs.ringrtc_size_delta_report}}
+          edit-mode: replace
+          comment-id: ${{ steps.find-comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          token: ${{ secrets.GITHUB_TOKEN }}
