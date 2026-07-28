@@ -2986,7 +2986,6 @@ dependencies = [
  "hkdf",
  "hmac",
  "jni",
- "lazy_static",
  "libc",
  "libsignal-core",
  "log",

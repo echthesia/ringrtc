@@ -9,14 +9,13 @@ use std::{
     convert::TryFrom,
     fmt::Formatter,
     sync::{
-        Arc, Mutex, Once,
+        Arc, LazyLock, Mutex, Once,
         atomic::AtomicBool,
         mpsc::{Receiver, Sender, channel},
     },
     time::Duration,
 };
 
-use lazy_static::lazy_static;
 use neon::{
     prelude::*,
     types::{JsBigInt, JsDate, buffer::TypedArray},
@@ -79,10 +78,9 @@ pub struct LogMessage {
 // We could report these as Events, but then logging during event processing would cause
 // the event handler to be rescheduled over and over.
 static LOG: Log = Log;
-lazy_static! {
-    static ref LOG_MESSAGES: Mutex<Vec<LogMessage>> = Mutex::new(Vec::new());
-    static ref CURRENT_EVENT_REPORTER: Mutex<Option<EventReporter>> = Mutex::new(None);
-}
+static LOG_MESSAGES: LazyLock<Mutex<Vec<LogMessage>>> = LazyLock::new(|| Mutex::new(Vec::new()));
+static CURRENT_EVENT_REPORTER: LazyLock<Mutex<Option<EventReporter>>> =
+    LazyLock::new(|| Mutex::new(None));
 
 struct Log;
 

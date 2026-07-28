@@ -11,13 +11,12 @@ use std::{
     cmp::Ordering,
     collections::{HashMap, HashSet, VecDeque},
     fmt, stringify,
-    sync::{Arc, MutexGuard},
+    sync::{Arc, LazyLock, MutexGuard},
     thread,
     time::{Duration, Instant, SystemTime},
 };
 
 use bytes::{Bytes, BytesMut};
-use lazy_static::lazy_static;
 use prost::Message;
 use zkgroup::call_links::CallLinkSecretParams;
 
@@ -64,16 +63,16 @@ use crate::{
 pub const MAX_MESSAGE_AGE: Duration = Duration::from_secs(60);
 const TIME_OUT_PERIOD: Duration = Duration::from_secs(60);
 
-lazy_static! {
-    static ref INCOMING_GROUP_CALL_RING_TIME: Duration =
-        std::env::var("INCOMING_GROUP_CALL_RING_SECS")
-            .ok()
-            .map(|secs| secs
-                .parse()
-                .expect("INCOMING_GROUP_CALL_RING_SECS must be an integer"))
-            .map(Duration::from_secs)
-            .unwrap_or(TIME_OUT_PERIOD);
-}
+static INCOMING_GROUP_CALL_RING_TIME: LazyLock<Duration> = LazyLock::new(|| {
+    std::env::var("INCOMING_GROUP_CALL_RING_SECS")
+        .ok()
+        .map(|secs| {
+            secs.parse()
+                .expect("INCOMING_GROUP_CALL_RING_SECS must be an integer")
+        })
+        .map(Duration::from_secs)
+        .unwrap_or(TIME_OUT_PERIOD)
+});
 
 /// Spawns a task on the worker thread to handle an API
 /// request with error handling.

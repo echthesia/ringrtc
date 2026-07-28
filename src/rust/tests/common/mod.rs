@@ -10,10 +10,10 @@
 use std::{
     cell::RefCell,
     env,
+    sync::LazyLock,
     time::{Duration, SystemTime},
 };
 
-use lazy_static::lazy_static;
 use rand::{
     Rng, SeedableRng,
     distributions::{Distribution, Standard},
@@ -63,20 +63,18 @@ impl Prng {
     }
 }
 
-lazy_static! {
-    static ref RANDOM_SEED: u64 = {
-        let seed = match env::var("RANDOM_SEED") {
-            Ok(v) => v.parse().unwrap(),
-            Err(_) => SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)
-                .expect(error_line!())
-                .as_millis() as u64,
-        };
-
-        println!("\n*** Using random seed: {}", seed);
-        seed
+static RANDOM_SEED: LazyLock<u64> = LazyLock::new(|| {
+    let seed = match env::var("RANDOM_SEED") {
+        Ok(v) => v.parse().unwrap(),
+        Err(_) => SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .expect(error_line!())
+            .as_millis() as u64,
     };
-}
+
+    println!("\n*** Using random seed: {}", seed);
+    seed
+});
 
 pub fn test_init() {
     let _ = env_logger::try_init();
