@@ -1,5 +1,9 @@
 # Changelog
 
+## v2.70.2
+
+- Trim string before checking LiteralPrefix redaction
+
 ## v2.70.1
 
 - Build / test: Remove unused methods for call simulator
