@@ -1065,9 +1065,9 @@ fn log_c_str(s: &CStr) {
                 return;
             }
 
-            // Assume valid lines are formatted "file:lineno" and ignore anything
+            // Assume valid lines are formatted "file:lineno:" and ignore anything
             // not matching
-            let identifier_re = regex_aot::regex!(r"[^\s]+:\d+");
+            let identifier_re = regex_aot::regex!(r"[^\s]+:\d+:");
 
             let Some(m) = identifier_re.find(msg) else {
                 return;

@@ -321,7 +321,7 @@ impl RedactionSpec {
         // bail early in the likely case that this filter is irrelevant
         let applies = match &self.applies_to_line {
             AppliesToLine::Regex(re) => re.is_match(text.as_bytes()),
-            AppliesToLine::LiteralPrefix(s) => text.starts_with(s),
+            AppliesToLine::LiteralPrefix(s) => text.trim().starts_with(s),
         };
         if !applies {
             return text;
@@ -653,6 +653,13 @@ mod audio_device_module_tests {
             "collection: Audio device default changed, id = Te...wo,"
         );
 
+        assert_eq!(
+            re3.redact_if_matching(
+                " collection: Audio device default changed, id = TestOneTwo,".into()
+            ),
+            " collection: Audio device default changed, id = Te...wo,"
+        );
+
         let re4 = RedactionSpec {
             applies_to_line: AppliesToLine::Regex(regex_aot::regex!(r".* is the sensitive part")),
             segments_to_keep: vec![regex_aot::regex!(r" is the sensitive part")],
@@ -804,6 +811,10 @@ mod audio_device_module_tests {
 
         assert_eq!(do_cubeb_redactions("PulseAudio default sink info: name=alsa_output.pci-0000_64_00.6.HiFi__Speaker__sink, description=Ryzen HD Audio Controller Speaker, driver=PipeWire, latency=0".into()),
         "PulseAudio default sink info: name=al...nk, description=Ry...er, driver=PipeWire, latency=0");
+
+        // Note the leading whitespace
+        assert_eq!(do_cubeb_redactions(" PulseAudio default sink info: name=alsa_output.pci-0000_64_00.6.HiFi__Speaker__sink, description=Ryzen HD Audio Controller Speaker, driver=PipeWire, latency=0".into()),
+                   " PulseAudio default sink info: name=al...nk, description=Ry...er, driver=PipeWire, latency=0");
     }
 
     #[test]
