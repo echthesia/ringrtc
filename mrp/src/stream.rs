@@ -553,10 +553,10 @@ mod tests {
     };
 
     use rand::{
-        Rng, SeedableRng,
+        RngExt, SeedableRng,
         distr::{Iter, Uniform},
         rng,
-        rngs::StdRng,
+        rngs::{StdRng, SysRng},
         seq::SliceRandom,
     };
 
@@ -1607,7 +1607,7 @@ mod tests {
     impl<T: Debug + PartialEq> DelayReceiver<T> {
         fn new(recv_channel: Receiver<T>, low: u64, high: u64) -> Self {
             // unfortunately no poisson distribution
-            let rng: StdRng = SeedableRng::from_os_rng();
+            let rng: StdRng = StdRng::try_from_rng(&mut SysRng).unwrap();
             let delay_iter = rng.sample_iter(Uniform::new(low, high).unwrap());
             DelayReceiver {
                 delay_iter,

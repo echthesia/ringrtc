@@ -11,7 +11,7 @@ use aes_gcm_siv::{
 };
 use anyhow::{anyhow, bail};
 use hkdf::Hkdf;
-use rand::{CryptoRng, RngCore};
+use rand::CryptoRng;
 use sha2::Sha256;
 use zkgroup::call_links::CallLinkSecretParams;
 
@@ -275,7 +275,7 @@ impl CallLinkRootKey {
     const ENCRYPTION_BLOCK_SIZE: usize = 32;
 
     /// Generates a call link root key. The latest version of the key is generated.
-    pub fn generate(mut rng: impl RngCore + CryptoRng) -> Self {
+    pub fn generate(mut rng: impl CryptoRng) -> Self {
         // Repeatedly generate CRN bytes until there are no groups of two bytes that share
         // four of the same hex digits. The chances of having to do more than three total
         // generations are 8 in 1 billion.
@@ -289,7 +289,7 @@ impl CallLinkRootKey {
 
     /// Generates an admin passkey. There are no constraints on the admin passkey, other than
     /// not being unreasonably long. It's never shown to users.
-    pub fn generate_admin_passkey(mut rng: impl RngCore + CryptoRng) -> Vec<u8> {
+    pub fn generate_admin_passkey(mut rng: impl CryptoRng) -> Vec<u8> {
         let mut result = [0; 16];
         rng.fill_bytes(&mut result);
         result.to_vec()
@@ -306,7 +306,7 @@ impl CallLinkRootKey {
         room_id_bytes.to_vec()
     }
 
-    pub fn encrypt(&self, plaintext: &[u8], mut rng: impl RngCore + CryptoRng) -> Vec<u8> {
+    pub fn encrypt(&self, plaintext: &[u8], mut rng: impl CryptoRng) -> Vec<u8> {
         // Pad similarly to Signal messages: append 0x80, then zero or more 0x00 bytes.
         // The final buffer will be (nonce || encrypt(plaintext || 0x80 || 0x00*) || tag).
         let mut buffer = Vec::new();
@@ -436,7 +436,7 @@ mod tests {
     #[test]
     fn test_round_trip_random() {
         for _ in 0..100 {
-            let key = CallLinkRootKey::generate(rand::thread_rng());
+            let key = CallLinkRootKey::generate(rand::rng());
             let formatted = key.to_formatted_string();
             let round_trip_key = CallLinkRootKey::try_from(formatted.as_str()).unwrap();
             assert_eq!(key.as_slice(), round_trip_key.as_slice(), "{formatted}")
@@ -463,11 +463,11 @@ mod tests {
 
     #[test]
     fn test_key_version_downgrade() {
-        let key = CallLinkRootKey::generate(rand::thread_rng());
+        let key = CallLinkRootKey::generate(rand::rng());
         let room_id = key.derive_room_id();
         let auth_params = CallLinkSecretParams::derive_from_root_key(key.as_slice());
 
-        let encrypted_name = key.encrypt("Some key".as_bytes(), rand::thread_rng());
+        let encrypted_name = key.encrypt("Some key".as_bytes(), rand::rng());
         let response = CallLinkResponse {
             encrypted_name: &encrypted_name,
             restrictions: CallLinkRestrictions::None,
@@ -489,16 +489,16 @@ mod tests {
 
     #[test]
     fn test_encrypt() {
-        let key = CallLinkRootKey::generate(rand::thread_rng());
+        let key = CallLinkRootKey::generate(rand::rng());
         let plaintext = b"Secret Hideout";
-        let ciphertext = key.encrypt(plaintext, rand::thread_rng());
+        let ciphertext = key.encrypt(plaintext, rand::rng());
         assert_eq!(
             plaintext.as_slice(),
             key.decrypt(&ciphertext).unwrap().as_slice()
         );
 
         // Check that we do use a random nonce.
-        let ciphertext_repeated = key.encrypt(plaintext, rand::thread_rng());
+        let ciphertext_repeated = key.encrypt(plaintext, rand::rng());
         assert_ne!(ciphertext, ciphertext_repeated, "not salted");
         assert_ne!(
             ciphertext[..plaintext.len()],
@@ -507,7 +507,7 @@ mod tests {
         );
 
         // Check that we do pad short titles.
-        let different_ciphertext = key.encrypt(b"Secret Base", rand::thread_rng());
+        let different_ciphertext = key.encrypt(b"Secret Base", rand::rng());
         assert_eq!(ciphertext.len(), different_ciphertext.len(),);
     }
 }

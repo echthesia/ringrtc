@@ -20,7 +20,7 @@ use hkdf::Hkdf;
 use mrp::{MrpReceiveError, MrpSendError, MrpStream};
 use num_enum::TryFromPrimitive;
 use prost::Message;
-use rand::{Rng, rngs::OsRng};
+use rand::{RngExt, rand_core::UnwrapErr, rngs::SysRng};
 use sha2::{Digest, Sha256};
 use x25519_dalek::{EphemeralSecret, PublicKey};
 use zkgroup::{
@@ -1296,7 +1296,7 @@ impl Client {
         // We only send with this key until the first person joins, at which point
         // we ratchet the key forward.
         let frame_crypto_context = Arc::new(CallMutex::new(
-            frame_crypto::Context::new(frame_crypto::random_secret(&mut rand::rngs::OsRng)),
+            frame_crypto::Context::new(frame_crypto::random_secret(&mut UnwrapErr(SysRng))),
             "Frame encryption context",
         ));
         let frame_crypto_context_for_outside_actor = frame_crypto_context.clone();
@@ -1952,7 +1952,8 @@ impl Client {
                                 Some(Instant::now() + MEMBERSHIP_PROOF_REQUEST_INTERVAL);
                         }
 
-                        let client_secret = EphemeralSecret::random_from_rng(OsRng);
+                        let client_secret =
+                            EphemeralSecret::random_from_rng(&mut UnwrapErr(SysRng));
                         let client_pub_key = PublicKey::from(&client_secret);
                         state.dhe_state = DheState::start(client_secret);
                         state.sfu_client.join(
@@ -3542,7 +3543,7 @@ impl Client {
 
                 // First generate a new key, then wait some time, and then apply it.
                 let ratchet_counter: frame_crypto::RatchetCounter = 0;
-                let secret = frame_crypto::random_secret(&mut rand::rngs::OsRng);
+                let secret = frame_crypto::random_secret(&mut UnwrapErr(rand::rngs::SysRng));
 
                 if let JoinState::Pending(local_demux_id) | JoinState::Joined(local_demux_id) =
                     state.join_state
@@ -5291,8 +5292,9 @@ impl RtpObserverTrait for RtpObserverImpl {
 }
 
 fn random_alphanumeric(len: usize) -> String {
+    let mut rng = UnwrapErr(SysRng);
     std::iter::repeat(())
-        .map(|()| rand::rngs::OsRng.sample(rand::distributions::Alphanumeric))
+        .map(|()| rng.sample(rand::distr::Alphanumeric))
         .take(len)
         .map(char::from)
         .collect()
@@ -5496,7 +5498,7 @@ mod tests {
             call_creator: Option<UserId>,
             options: FakeSfuClientOptions,
         ) -> Self {
-            let server_secret = EphemeralSecret::random_from_rng(OsRng);
+            let server_secret = EphemeralSecret::random_from_rng(&mut UnwrapErr(SysRng));
             let server_dhe_pub_key = *PublicKey::from(&server_secret).as_bytes();
             Self {
                 sfu_info: SfuInfo {
@@ -9460,6 +9462,8 @@ mod tests {
 
 #[cfg(test)]
 mod remote_devices_tests {
+    use rand::{rand_core::SeedableRng, rngs::ChaCha8Rng};
+
     use super::*;
 
     #[test]
@@ -9585,29 +9589,7 @@ mod remote_devices_tests {
 
     #[test]
     fn dhe_state() {
-        struct NotCryptoRng<T: rand::RngCore>(T);
-
-        impl<T: rand::RngCore> rand::RngCore for NotCryptoRng<T> {
-            fn next_u32(&mut self) -> u32 {
-                self.0.next_u32()
-            }
-
-            fn next_u64(&mut self) -> u64 {
-                self.0.next_u64()
-            }
-
-            fn fill_bytes(&mut self, dest: &mut [u8]) {
-                self.0.fill_bytes(dest)
-            }
-
-            fn try_fill_bytes(&mut self, dest: &mut [u8]) -> std::result::Result<(), rand::Error> {
-                self.0.try_fill_bytes(dest)
-            }
-        }
-
-        impl<T: rand::RngCore> rand::CryptoRng for NotCryptoRng<T> {}
-
-        let mut rand = NotCryptoRng(rand::rngs::mock::StepRng::new(1, 1));
+        let mut rand = ChaCha8Rng::from_seed([0u8; 32]);
         let client_secret = EphemeralSecret::random_from_rng(&mut rand);
         let server_secret = EphemeralSecret::random_from_rng(&mut rand);
         let client_pub_key = PublicKey::from(&client_secret);
@@ -9647,7 +9629,7 @@ mod remote_devices_tests {
 
     #[test]
     fn dhe_state_fails_to_negotiate_with_low_order_server_key() {
-        let client_secret = EphemeralSecret::random_from_rng(OsRng);
+        let client_secret = EphemeralSecret::random_from_rng(&mut UnwrapErr(SysRng));
         let low_order_server_key = PublicKey::from([0u8; 32]);
 
         let state = DheState::start(client_secret);

@@ -19,7 +19,7 @@ use std::{
 use bytes::BytesMut;
 use hkdf::Hkdf;
 use prost::Message;
-use rand::rngs::OsRng;
+use rand::{rand_core::UnwrapErr, rngs::SysRng};
 use sha2::Sha256;
 use x25519_dalek::{PublicKey, StaticSecret};
 
@@ -2302,7 +2302,7 @@ where
 }
 
 fn generate_local_secret_and_public_key() -> Result<(StaticSecret, PublicKey)> {
-    let secret = StaticSecret::random_from_rng(OsRng);
+    let secret = StaticSecret::random_from_rng(&mut UnwrapErr(SysRng));
     let public = PublicKey::from(&secret);
     Ok((secret, public))
 }
@@ -2427,7 +2427,7 @@ mod tests {
 
     #[test]
     fn negotiate_srtp_keys_rejects_low_order_remote_key() {
-        let local_secret = StaticSecret::random_from_rng(OsRng);
+        let local_secret = StaticSecret::random_from_rng(&mut UnwrapErr(SysRng));
         let low_order_key = [0u8; 32];
         let result =
             negotiate_srtp_keys(&local_secret, &low_order_key, b"caller_key", b"callee_key");

@@ -20,6 +20,7 @@ use neon::{
     prelude::*,
     types::{JsBigInt, JsDate, buffer::TypedArray},
 };
+use rand::rand_core::UnwrapErr;
 use strum::IntoDiscriminant;
 
 use crate::{
@@ -2164,7 +2165,7 @@ fn updateCallLink(mut cx: FunctionContext) -> JsResult<JsValue> {
         Some(if name.is_empty() {
             vec![]
         } else {
-            root_key.encrypt(name.as_bytes(), rand::rngs::OsRng)
+            root_key.encrypt(name.as_bytes(), UnwrapErr(rand::rngs::SysRng))
         })
     };
 
@@ -3137,13 +3138,13 @@ fn CallLinkRootKey_validate(mut cx: FunctionContext) -> JsResult<JsUndefined> {
 
 #[allow(non_snake_case)]
 fn CallLinkRootKey_generate(mut cx: FunctionContext) -> JsResult<JsUint8Array> {
-    let key = CallLinkRootKey::generate(rand::rngs::OsRng);
+    let key = CallLinkRootKey::generate(UnwrapErr(rand::rngs::SysRng));
     JsUint8Array::from_slice(&mut cx, key.as_slice())
 }
 
 #[allow(non_snake_case)]
 fn CallLinkRootKey_generateAdminPasskey(mut cx: FunctionContext) -> JsResult<JsUint8Array> {
-    let passkey = CallLinkRootKey::generate_admin_passkey(rand::rngs::OsRng);
+    let passkey = CallLinkRootKey::generate_admin_passkey(UnwrapErr(rand::rngs::SysRng));
     JsUint8Array::from_slice(&mut cx, passkey.as_slice())
 }
 

@@ -1426,7 +1426,7 @@ mod test {
     use std::time::Duration;
 
     use prost::Message;
-    use rand::Rng;
+    use rand::RngExt;
 
     use crate::{
         core::call_summary::{MAX_TELEMETRY_ENCODED_SIZE, Sample, StatsSets},
@@ -1440,9 +1440,9 @@ mod test {
 
     #[test]
     fn test_welford() {
-        let mut rng = rand::thread_rng();
+        let mut rng = rand::rng();
         let samples: Vec<f32> = (0..1000)
-            .map(|_| rng.gen_range(-50000.0..50000.0))
+            .map(|_| rng.random_range(-50000.0..50000.0))
             .collect();
 
         let mean_0 = samples.iter().sum::<f32>() / (samples.len() as f32);

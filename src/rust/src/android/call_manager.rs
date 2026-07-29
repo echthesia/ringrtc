@@ -14,6 +14,7 @@ use jni::{
     sys::{jbyte, jint, jlong, jobject},
 };
 use log::Level;
+use rand::rand_core::UnwrapErr;
 
 use crate::{
     android::{
@@ -697,7 +698,7 @@ pub fn update_call_link(
         if name.is_empty() {
             vec![]
         } else {
-            root_key.encrypt(name.as_bytes(), rand::rngs::OsRng)
+            root_key.encrypt(name.as_bytes(), UnwrapErr(rand::rngs::SysRng))
         }
     });
     let new_restrictions = jint_to_restrictions(new_restrictions);

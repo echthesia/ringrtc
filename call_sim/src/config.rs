@@ -2,7 +2,7 @@ use std::time::SystemTime;
 
 use base64::{Engine, prelude::BASE64_STANDARD};
 use hex::ToHex;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 use crate::common::{ClientProfile, Group, GroupMember};

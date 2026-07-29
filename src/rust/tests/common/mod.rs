@@ -15,10 +15,11 @@ use std::{
 };
 
 use rand::{
-    Rng, SeedableRng,
-    distributions::{Distribution, Standard},
+    RngExt,
+    distr::{Distribution, StandardUniform},
+    rand_core::SeedableRng,
+    rngs::ChaCha20Rng,
 };
-use rand_chacha::ChaCha20Rng;
 use ringrtc::{
     common::{ApplicationEvent, CallEndReason, CallMediaType, DeviceId},
     core::{call::Call, call_manager::CallManager, connection::Connection, group_call, signaling},
@@ -57,9 +58,9 @@ impl Prng {
 
     pub fn generate<T>(&self) -> T
     where
-        Standard: Distribution<T>,
+        StandardUniform: Distribution<T>,
     {
-        self.rng.borrow_mut().r#gen::<T>()
+        self.rng.borrow_mut().random::<T>()
     }
 }
 
@@ -278,7 +279,7 @@ impl TestContext {
 }
 
 pub fn random_received_offer(_prng: &Prng, age: Duration) -> signaling::ReceivedOffer {
-    let local_public_key = rand::thread_rng().r#gen::<[u8; 32]>().to_vec();
+    let local_public_key = rand::rng().random::<[u8; 32]>().to_vec();
     let offer = signaling::Offer::from_v4(
         CallMediaType::Audio,
         protobuf::signaling::ConnectionParametersV4 {
@@ -309,7 +310,7 @@ pub fn random_received_answer(
     _prng: &Prng,
     sender_device_id: DeviceId,
 ) -> signaling::ReceivedAnswer {
-    let local_public_key = rand::thread_rng().r#gen::<[u8; 32]>().to_vec();
+    let local_public_key = rand::rng().random::<[u8; 32]>().to_vec();
     let answer = signaling::Answer::from_v4(protobuf::signaling::ConnectionParametersV4 {
         public_key: Some(local_public_key),
         ice_ufrag: None,
