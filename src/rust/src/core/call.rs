@@ -1218,7 +1218,7 @@ where
             parent_connection.synchronize()?;
         }
         if let Ok(mut connection_map) = self.connection_map.lock() {
-            for (_, connection) in connection_map.iter_mut() {
+            for connection in connection_map.values_mut() {
                 info!(
                     "synchronize(): call_id: {} remote_device_id: {}",
                     self.call_id(),

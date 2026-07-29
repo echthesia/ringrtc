@@ -925,7 +925,7 @@ where
         for i in 0..3 {
             info!("synchronize(): pass: {}", i);
             let mut calls = self.call_by_call_id.lock()?.clone();
-            for (_, call) in calls.iter_mut() {
+            for call in calls.values_mut() {
                 info!("synchronize(): syncing call: {}", call.call_id());
                 call.synchronize()?;
             }
@@ -1976,7 +1976,7 @@ where
 
     #[cfg(feature = "sim")]
     pub fn age_all_outstanding_group_rings(&mut self, age: Duration) {
-        for (_group_id, ring) in self.outstanding_group_rings.lock().unwrap().iter_mut() {
+        for ring in self.outstanding_group_rings.lock().unwrap().values_mut() {
             ring.received -= age;
         }
     }

@@ -3085,7 +3085,7 @@ impl Client {
                         std::net::IpAddr::V6(v6) => v6.octets().to_vec(),
                     },
                     addr.port(),
-                    &hostname
+                    hostname
                 );
                 state.peer_connection.add_ice_candidate_from_server(
                     addr.ip(),

@@ -276,7 +276,7 @@ fn main() -> Result<()> {
     // Show WebRTC logs via application Logger while debugging.
     ringrtc::webrtc::logging::set_logger(log::LevelFilter::Debug);
 
-    info!("Setting field trials to {}", &args.field_trials);
+    info!("Setting field trials to {}", args.field_trials);
 
     let ice_servers = if args.relay_urls.is_empty() && args.relay_ips.is_empty() {
         vec![IceServer::none()]

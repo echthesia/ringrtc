@@ -748,7 +748,7 @@ impl Test {
 
                 let mos = AnalysisReport::parse_visqol_mos_results(&format!(
                     "{}/{}.{}",
-                    self.set_path, wav_name, &extension
+                    self.set_path, wav_name, extension
                 ))
                 .await?;
 
@@ -768,7 +768,7 @@ impl Test {
 
                 let mos = AnalysisReport::parse_visqol_mos_results(&format!(
                     "{}/{}.{}",
-                    self.set_path, wav_name_speech, &extension
+                    self.set_path, wav_name_speech, extension
                 ))
                 .await?;
 

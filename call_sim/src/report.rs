@@ -3092,7 +3092,7 @@ impl Html {
         let _ = writeln!(
             buf,
             "<p><code><pre>\n{:#?}</pre></code></p>",
-            &test_case_config.client_a_config
+            test_case_config.client_a_config
         );
         buf.push_str("</div>\n");
 
@@ -3101,7 +3101,7 @@ impl Html {
         let _ = writeln!(
             buf,
             "<p><code><pre>\n{:#?}</pre></code></p>",
-            &test_case_config.client_b_config
+            test_case_config.client_b_config
         );
         buf.push_str("</div>\n");
 

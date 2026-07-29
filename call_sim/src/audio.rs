@@ -122,7 +122,7 @@ pub async fn chop_audio_and_analyze(
 
             if let Some(mos) = AnalysisReport::parse_visqol_mos_results(&format!(
                 "{}/{}.{}",
-                audio_files.degraded_path, degraded_file, &extension
+                audio_files.degraded_path, degraded_file, extension
             ))
             .await?
             {
@@ -179,7 +179,7 @@ pub async fn chop_audio_and_analyze(
 
                 if let Some(mos) = AnalysisReport::parse_visqol_mos_results(&format!(
                     "{}/{}.{}",
-                    speech_files.degraded_path, degraded_file, &extension
+                    speech_files.degraded_path, degraded_file, extension
                 ))
                 .await?
                 {
@@ -227,7 +227,7 @@ pub async fn chop_audio_and_analyze(
 
                 if let Some(mos) = AnalysisReport::parse_pesq_mos_results(&format!(
                     "{}/{}.{}",
-                    speech_files.degraded_path, degraded_file, &extension
+                    speech_files.degraded_path, degraded_file, extension
                 ))
                 .await?
                 {
@@ -268,7 +268,7 @@ pub async fn chop_audio_and_analyze(
 
                 if let Some(mos) = AnalysisReport::parse_plc_mos_results(&format!(
                     "{}/{}.{}",
-                    speech_files.degraded_path, degraded_file, &extension
+                    speech_files.degraded_path, degraded_file, extension
                 ))
                 .await?
                 {
@@ -383,7 +383,7 @@ pub async fn get_audio_and_analyze(
 
         if let Some(mos) = AnalysisReport::parse_visqol_mos_results(&format!(
             "{}/{}.{}",
-            audio_files.degraded_path, audio_files.degraded_file, &extension
+            audio_files.degraded_path, audio_files.degraded_file, extension
         ))
         .await?
         {

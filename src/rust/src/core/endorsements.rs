@@ -98,10 +98,9 @@ impl EndorsementsCache {
         if let Some(endorsement_map) = self.endorsements.get(&expiration) {
             let mut found = Vec::with_capacity(recipients.len());
             for recipient in recipients {
-                if let Some(endorsement) = endorsement_map.get(&recipient) {
+                {
+                    let endorsement = endorsement_map.get(&recipient)?;
                     found.push(endorsement)
-                } else {
-                    return None;
                 }
             }
 

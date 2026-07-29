@@ -181,8 +181,10 @@ where
             };
 
             // drop packets abandoned due to a previous merge conflict
-            if self.merge_end_seqnum.is_some() && self.merge_buffer.is_none() {
-                if self.merge_end_seqnum.unwrap() < seqnum {
+            if let Some(merge_end_seqnum) = self.merge_end_seqnum
+                && self.merge_buffer.is_none()
+            {
+                if merge_end_seqnum < seqnum {
                     self.merge_buffer = None;
                 } else {
                     continue;
