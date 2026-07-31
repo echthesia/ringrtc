@@ -123,9 +123,9 @@ jobs:
     steps:
     - name: Install dependencies
       run: |
-        if [[ "${{ matrix.os }}" == macos-* ]]; then
+        if [[ "${{ runner.os }}" == "macOS" ]]; then
           brew install protobuf coreutils
-        elif [[ "${{ matrix.os }}" == ubuntu-* ]]; then
+        elif [[ "${{ runner.os }}" == "Linux" ]]; then
           sudo add-apt-repository ppa:pipewire-debian/pipewire-upstream && sudo apt-get update && sudo apt-get install -y protobuf-compiler libpulse-dev libpulse0 pipewire && systemctl --user daemon-reload && systemctl --user --now enable pipewire pipewire-pulse
         fi
     - uses: actions/checkout@v6
@@ -134,13 +134,13 @@ jobs:
         node-version-file: 'src/node/.nvmrc'
     - name: Install Protoc for Windows
       uses: ./.github/actions/install-protoc
-      if: ${{ startsWith(matrix.os, 'windows-') }}
+      if: ${{ runner.os == 'Windows' }}
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal
     - run: bin/fetch-artifact -p desktop
     - run: bin/build-desktop --release --ringrtc-only --test-ringrtc-adm
-      if: ${{ !startsWith(matrix.os, 'windows-') }}
+      if: ${{ runner.os != 'Windows' }}
     - run: bin/build-desktop --release --ringrtc-only --test-ringrtc-adm-utils
-      if: ${{ startsWith(matrix.os, 'windows-') }}
+      if: ${{ runner.os == 'Windows' }}
 
     - name: Get cached base sizes
       id: cache-base
@@ -169,10 +169,10 @@ jobs:
     - run: npm run build
       working-directory: src/node
     - run: xvfb-run --auto-servernum npm test -- --no-sandbox
-      if: startsWith(matrix.os, 'ubuntu-')
+      if: ${{ runner.os == 'Linux' }}
       working-directory: src/node
     - run: npm test
-      if: ${{ !startsWith(matrix.os, 'ubuntu-') }}
+      if: ${{ runner.os != 'Linux' }}
       working-directory: src/node
 
   cargo_build_using_prebuilt:
@@ -188,9 +188,9 @@ jobs:
     steps:
     - name: Install dependencies
       run: |
-        if [[ "${{ matrix.os }}" == macos-* ]]; then
+        if [[ "${{ runner.os }}" = "macOS" ]]; then
           brew install protobuf coreutils
-        elif [[ "${{ matrix.os }}" == ubuntu-* ]]; then
+        elif [[ "${{ runner.os }}" == "Linux" ]]; then
           sudo apt-get update && sudo apt-get install -y protobuf-compiler libpulse-dev
         fi
     - uses: actions/checkout@v6
@@ -199,7 +199,7 @@ jobs:
         node-version-file: 'src/node/.nvmrc'
     - name: Install Protoc for Windows
       uses: ./.github/actions/install-protoc
-      if: ${{ startsWith(matrix.os, 'windows-') }}
+      if: ${{ runner.os == 'Windows' }}
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal
     - run: cargo build -p ringrtc --features prebuilt_webrtc
 
