@@ -39,7 +39,7 @@
   "license": "AGPL-3.0-only",
   "dependencies": {
     "https-proxy-agent": "7.0.6",
-    "tar": "7.5.15"
+    "tar": "7.5.22"
   },
   "devDependencies": {
     "@types/chai": "5.2.3",
