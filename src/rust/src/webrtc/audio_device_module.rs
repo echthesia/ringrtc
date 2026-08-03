@@ -21,6 +21,10 @@ use std::{
 use anyhow::{Context as AnyhowContext, anyhow, bail};
 use cubeb::{Context, DeviceId, MonoFrame, StereoFrame, Stream, StreamPrefs};
 use cubeb_core::{InputProcessingParams, LogLevel, log_enabled, set_logging};
+#[cfg(not(feature = "sim"))]
+use webrtc::ffi::audio_device_module::{Rust_needMorePlayData, Rust_recordedDataIsAvailable};
+#[cfg(feature = "sim")]
+use webrtc::sim::audio_device_module::{Rust_needMorePlayData, Rust_recordedDataIsAvailable};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Com;
 
@@ -793,7 +797,7 @@ impl Worker {
         // * The local new_mic_level pointer is valid and this function is synchronous, so it'll
         //   remain valid while it runs.
         let ret = unsafe {
-            crate::webrtc::ffi::audio_device_module::Rust_recordedDataIsAvailable(
+            Rust_recordedDataIsAvailable(
                 samples.as_ptr() as *const c_void,
                 samples.len(),
                 std::mem::size_of::<i16>(),
@@ -822,7 +826,7 @@ impl Worker {
         // * The local variable pointers are all valid and this function is synchronous, so they'll
         //   remain valid while it runs.
         let ret = unsafe {
-            crate::webrtc::ffi::audio_device_module::Rust_needMorePlayData(
+            Rust_needMorePlayData(
                 samples,
                 std::mem::size_of::<i16>(),
                 channels.try_into().unwrap(), // constant, so unwrap is safe
