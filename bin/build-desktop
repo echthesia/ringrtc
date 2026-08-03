@@ -38,8 +38,9 @@ clean()
     cargo clean
 }
 
-BUILD_TYPE=debug
-BUILD_WHAT=all
+# Fall back to explicitly specified BUILD_TYPE and BUILD_WHAT if requested
+BUILD_TYPE="${BUILD_TYPE:-debug}"
+BUILD_WHAT="${BUILD_WHAT:-all}"
 SKIP_CALL_SIM_CLI=
 SKIP_ELECTRON=
 ARCHIVE_WEBRTC=
@@ -279,11 +280,11 @@ then
 
 
         mkdir -p src/node/build/${DEFAULT_PLATFORM}
-        copy_to_node target/${CARGO_TARGET}/${BUILD_TYPE}/${OUTPUT_LIBRARY} src/node/build/${DEFAULT_PLATFORM}/libringrtc-"${TARGET_ARCH}".node
+        copy_to_node "target/${CARGO_TARGET}/${BUILD_TYPE}/${OUTPUT_LIBRARY}" "src/node/build/${DEFAULT_PLATFORM}/libringrtc-${TARGET_ARCH}.node"
 
         if [ "${BUILD_TYPE}" = "release" ] && [ "$(command -v dump_syms)" ];
         then
-          dump_syms "target/${CARGO_TARGET}/${BUILD_TYPE}/${DEBUG_PACKAGE}" -o "${OUTPUT_DIR}"/${BUILD_TYPE}/libringrtc-"${PROJECT_VERSION}"-${DEFAULT_PLATFORM}-"${TARGET_ARCH}"-debuginfo.sym
+          dump_syms "target/${CARGO_TARGET}/${BUILD_TYPE}/${DEBUG_PACKAGE}" -o "${OUTPUT_DIR}/${BUILD_TYPE}/libringrtc-${PROJECT_VERSION}-${DEFAULT_PLATFORM}-${TARGET_ARCH}-debuginfo.sym"
         fi
     )
 fi

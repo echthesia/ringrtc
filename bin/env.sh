@@ -80,13 +80,6 @@ fi
 # This is the release branch of webrtc to check out
 WEBRTC_REVISION="branch-heads/${WEBRTC_VERSION}"
 
-# This function should be overridden by a platform specific
-# implementation.
-prepare_workspace_platform() {
-    echo "ERROR: prepare_workspace_platform() is undefined for this platform: $WEBRTC_PLATFORM"
-    exit 1
-}
-
 INTENDED_WEBRTC_PLATFORM=$WEBRTC_PLATFORM
 
 # current platform if it exists
@@ -107,9 +100,6 @@ if [ -n "$WEBRTC_PLATFORM" ] ; then
     if [ -f "$PLATFORM_ENV" ] ; then
         # shellcheck disable=SC1090 # can't check platform-specific file
         .  "$PLATFORM_ENV"
-    else
-        echo "ERROR: Unable to find platform specific environment settings: $PLATFORM_ENV"
-        exit 1
     fi
 fi
 
