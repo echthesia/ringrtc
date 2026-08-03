@@ -21,10 +21,6 @@ BUILD_TYPES := release debug
 
 GN_ARCHS     := arm arm64 x86 x64
 
-# This can be overridden on the command line, e.g. "make electron NODEJS_ARCH=ia32"
-# Note: make sure to only use NodeJS architectures here, like x64, ia32, arm64, etc.
-NODEJS_ARCH := x64
-
 help:
 	$(Q) echo "The following build targets are supported:"
 	$(Q) echo "  ios          -- build for the iOS platform"
@@ -37,8 +33,12 @@ help:
 	$(Q) echo "For release builds, you can also set USE_PREBUILD=1 to download "
 	$(Q) echo "a \"prebuild\" of WebRTC and use that instead of downloading and "
 	$(Q) echo "building WebRTC. For example:"
-	$(Q) echo "  $ TYPE=release make electron NODEJS_ARCH=arm64 USE_PREBUILD=1"
+	$(Q) echo "  $ TYPE=release make electron USE_PREBUILD=1"
 	$(Q) echo "  $ make ios USE_PREBUILD=1"
+	$(Q) echo
+	$(Q) echo "You can optionally specify TARGET_ARCH for the electron target to "
+	$(Q) echo "request a cross-build, but the default is building for the host "
+	$(Q) echo "architecture. (see bin/build-desktop for requirements)"
 	$(Q) echo
 	$(Q) echo "Specify PREPARE_WORKSPACE=1 to request a sync of WebRTC code."
 	$(Q) echo "For example:"
@@ -95,12 +95,10 @@ electron: PLATFORM ?= desktop
 electron:
 	$(Q) if [ "$(TYPE)" = "debug" ] ; then \
 		echo "Electron: Debug build" ; \
-		TARGET_ARCH=$(NODEJS_ARCH) BUILD_WHAT=$(BUILD_WHAT) \
-			BUILD_WEBRTC_TESTS=$(BUILD_WEBRTC_TESTS) ./bin/build-desktop -d --no-call-sim-cli ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -d --no-call-sim-cli ; \
 	else \
 		echo "Electron: Release build" ; \
-		TARGET_ARCH=$(NODEJS_ARCH) BUILD_WHAT=$(BUILD_WHAT) \
-			BUILD_WEBRTC_TESTS=$(BUILD_WEBRTC_TESTS) ./bin/build-desktop -r --no-call-sim-cli ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -r --no-call-sim-cli ; \
 	fi
 	$(Q) (cd src/node && npm install && npm run build)
 

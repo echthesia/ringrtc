@@ -212,16 +212,17 @@ that links the appropriate libringrtc.a for each architecture.
 
 To build the Node.js module suitable for including in an Electron app (e.g. Desktop), run:
 
-    make electron PLATFORM=<platform> NODEJS_ARCH=<arch>
+    make electron PLATFORM=<platform>
 
 where platform can be `mac`, `unix`, or `windows`.
 
-and where the (optional) `NODEJS_ARCH` can be:
+and where the (optional) `TARGET_ARCH` environment variable can be:
 - `x64`
 - `ia32`
 - `arm64`
 
-If no `NODEJS_ARCH` is provided, the build script will default to `x64`.
+If no `TARGET_ARCH` is provided, the build script will default to the host
+architecture.
 
 When the build is complete, the library will be available here:
 
