@@ -1062,24 +1062,9 @@ fn log_c_str(s: &CStr) {
 
     match s.to_str() {
         Ok(msg) => {
-            if msg.contains("DeviceID") && msg.contains("Name") {
-                // Shortcut:
-                // Entirely suppress spammy lines that log all devices (we already do this)
-                // See `log_device` in cubeb.c
-                return;
+            if let Some(s) = do_cubeb_redactions(msg) {
+                info!("cubeb: {s}");
             }
-
-            // Assume valid lines are formatted "file:lineno:" and ignore anything
-            // not matching
-            let identifier_re = regex_aot::regex!(r"[^\s]+:\d+:");
-
-            let Some(m) = identifier_re.find(msg) else {
-                return;
-            };
-            let ident = &msg[m.start()..m.end()];
-            let contents = &msg[m.end()..];
-
-            info!("cubeb: {ident}{}", do_cubeb_redactions(contents.into()));
         }
         Err(e) => {
             warn!("cubeb log message not UTF-8: {:?}", e);
