@@ -8,7 +8,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    net::{IpAddr, SocketAddr},
+    net::SocketAddr,
     str::FromStr,
     sync::Arc,
 };
@@ -233,14 +233,12 @@ struct SerializedPeekFailure<'a> {
 struct SerializedJoinResponse {
     #[serde(rename = "demuxId")]
     client_demux_id: u32,
-    #[serde(rename = "ips")]
-    server_ips: Vec<IpAddr>,
-    #[serde(rename = "port")]
-    server_port: u16,
-    #[serde(rename = "portTcp")]
-    server_port_tcp: u16,
-    #[serde(rename = "portTls", default)]
-    server_port_tls: Option<u16>,
+    #[serde(rename = "udpAddresses", default)]
+    server_udp_addresses: Vec<SocketAddr>,
+    #[serde(rename = "tcpAddresses", default)]
+    server_tcp_addresses: Vec<SocketAddr>,
+    #[serde(rename = "tlsAddresses", default)]
+    server_tls_addresses: Vec<SocketAddr>,
     #[serde(rename = "hostname", default)]
     server_hostname: Option<String>,
     #[serde(rename = "iceUfrag")]
@@ -297,32 +295,11 @@ pub struct JoinResponse {
 
 impl JoinResponse {
     fn from(deserialized: SerializedJoinResponse, member_resolver: &dyn MemberResolver) -> Self {
-        let server_udp_addresses = deserialized
-            .server_ips
-            .iter()
-            .map(|ip| SocketAddr::new(*ip, deserialized.server_port))
-            .collect();
-
-        let server_tcp_addresses = deserialized
-            .server_ips
-            .iter()
-            .map(|ip| SocketAddr::new(*ip, deserialized.server_port_tcp))
-            .collect();
-        let server_tls_addresses = deserialized
-            .server_port_tls
-            .map_or(vec![], |server_port_tls| {
-                deserialized
-                    .server_ips
-                    .iter()
-                    .map(|ip| SocketAddr::new(*ip, server_port_tls))
-                    .collect()
-            });
-
         Self {
             client_demux_id: deserialized.client_demux_id,
-            server_udp_addresses,
-            server_tcp_addresses,
-            server_tls_addresses,
+            server_udp_addresses: deserialized.server_udp_addresses,
+            server_tcp_addresses: deserialized.server_tcp_addresses,
+            server_tls_addresses: deserialized.server_tls_addresses,
             server_hostname: deserialized.server_hostname,
             server_ice_ufrag: deserialized.server_ice_ufrag,
             server_ice_pwd: deserialized.server_ice_pwd,
