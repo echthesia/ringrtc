@@ -708,11 +708,7 @@ impl Worker {
                     }
                 }
                 Event::SetPlayoutDeviceById(ref id) => {
-                    if let Some(d) = self.output_device_cache.iter().find(|d| {
-                        d.device_id
-                            .as_ref()
-                            .is_some_and(|actual_id| actual_id == id)
-                    }) {
+                    if let Some(d) = self.output_device_cache.iter().find(|d| &d.device_id == id) {
                         self.update_playout_device(d.devid)
                     } else {
                         Err(anyhow!(
@@ -733,11 +729,7 @@ impl Worker {
                     }
                 }
                 Event::SetRecordingDeviceById(ref id) => {
-                    if let Some(d) = self.input_device_cache.iter().find(|d| {
-                        d.device_id
-                            .as_ref()
-                            .is_some_and(|actual_id| actual_id == id)
-                    }) {
+                    if let Some(d) = self.input_device_cache.iter().find(|d| &d.device_id == id) {
                         self.update_recording_device(d.devid)
                     } else {
                         Err(anyhow!(

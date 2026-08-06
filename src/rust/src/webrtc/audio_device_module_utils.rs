@@ -26,7 +26,7 @@ use crate::{webrtc, webrtc::peer_connection_factory::AudioDevice};
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct MinimalDeviceInfo {
     pub devid: DeviceId,
-    pub device_id: Option<String>,
+    pub device_id: String,
     pub friendly_name: String,
     #[cfg(target_os = "linux")]
     device_type: DeviceType,
@@ -48,21 +48,21 @@ pub struct DeviceCollectionWrapper {
 
 #[cfg(target_os = "linux")]
 fn device_is_monitor(device: &MinimalDeviceInfo) -> bool {
-    device.device_type == DeviceType::INPUT
-        && device
-            .device_id
-            .as_ref()
-            .is_some_and(|s| s.ends_with(".monitor"))
+    device.device_type == DeviceType::INPUT && device.device_id.ends_with(".monitor")
 }
 
 impl DeviceCollectionWrapper {
     pub fn new(device_collection: &DeviceCollection<'_>) -> DeviceCollectionWrapper {
         let mut out = Vec::new();
         for device in device_collection.iter() {
-            if let Some(friendly) = device.friendly_name() {
+            // device_id and devid are directly related on all three supported cubeb backends;
+            // if device_id is missing, devid will also be missing, and the device won't work.
+            if let Some(friendly) = device.friendly_name()
+                && let Some(device_id) = device.device_id()
+            {
                 out.push(MinimalDeviceInfo {
                     devid: device.devid(),
-                    device_id: device.device_id().as_ref().map(|s| s.to_string()),
+                    device_id: device_id.to_string(),
                     friendly_name: friendly.to_string(),
                     #[cfg(target_os = "linux")]
                     device_type: device.device_type(),
@@ -70,7 +70,10 @@ impl DeviceCollectionWrapper {
                     state: device.state(),
                 })
             } else {
-                error!("Device {:?} has no friendly name", device.devid());
+                error!(
+                    "Device {:?} has no friendly name and/or device_id",
+                    device.devid()
+                );
             }
         }
         DeviceCollectionWrapper {
@@ -213,11 +216,7 @@ impl DeviceCollectionWrapper {
                 }
             }
             names.push(Some(AudioDevice {
-                // For devices missing unique_id, populate them with name + index
-                unique_id: info
-                    .device_id
-                    .clone()
-                    .unwrap_or_else(|| format!("{}-{}", info.friendly_name, i)),
+                unique_id: info.device_id.clone(),
                 name: name_copy,
                 i18n_key: "".to_string(),
             }));
@@ -933,7 +932,7 @@ mod audio_device_module_tests {
             device_collection: vec![
                 MinimalDeviceInfo {
                     devid: std::ptr::null(),
-                    device_id: Some("devid1".to_string()),
+                    device_id: "devid1".to_string(),
                     friendly_name: "Device 1".to_string(),
                     #[cfg(target_os = "linux")]
                     device_type: DeviceType::INPUT,
@@ -942,7 +941,7 @@ mod audio_device_module_tests {
                 },
                 MinimalDeviceInfo {
                     devid: std::ptr::null(),
-                    device_id: Some("devid2".to_string()),
+                    device_id: "devid2".to_string(),
                     friendly_name: "Device 2".to_string(),
                     #[cfg(target_os = "linux")]
                     device_type: DeviceType::INPUT,
@@ -1009,7 +1008,7 @@ mod audio_device_module_tests {
             device_collection: vec![
                 MinimalDeviceInfo {
                     devid: std::ptr::null(),
-                    device_id: Some("devid1".to_string()),
+                    device_id: "devid1".to_string(),
                     friendly_name: "Device 1".to_string(),
                     #[cfg(target_os = "linux")]
                     device_type: DeviceType::INPUT,
@@ -1018,7 +1017,7 @@ mod audio_device_module_tests {
                 },
                 MinimalDeviceInfo {
                     devid: std::ptr::null(),
-                    device_id: Some("devid2".to_string()),
+                    device_id: "devid2".to_string(),
                     friendly_name: "Device 2".to_string(),
                     #[cfg(target_os = "linux")]
                     device_type: DeviceType::INPUT,
