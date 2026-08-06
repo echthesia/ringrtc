@@ -182,7 +182,7 @@ impl AudioConfig {
         #[allow(unused_mut, unused_variables)] // iOS and Android won't use this; that's fine.
         mut audio_device_observer: Option<Box<dyn AudioDeviceObserver>>,
     ) -> Result<RffiAudioConfigWrapper> {
-        #[cfg(all(not(feature = "sim"), feature = "native"))]
+        #[cfg(feature = "native")]
         let (adm_borrowed, adm_arc) = match AudioDeviceModule::new() {
             Ok(mut adm) => {
                 if let Some(observer) = audio_device_observer.take() {
