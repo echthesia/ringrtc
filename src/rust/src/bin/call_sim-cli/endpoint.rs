@@ -9,7 +9,6 @@ mod group_call_sim;
 use std::{
     collections::{HashMap, HashSet},
     sync::mpsc::Sender,
-    thread,
     time::{Duration, Instant},
 };
 
@@ -17,6 +16,7 @@ use direct_call_sim::DirectCall;
 use group_call_sim::GroupCall;
 use log::*;
 use ringrtc::{
+    bin::utils::audio::set_default_audio_devices,
     common::{
         CallConfig, CallId, CallMediaType, DeviceId, Result,
         actor::{Actor, Stopper},
@@ -133,33 +133,8 @@ impl CallEndpoint {
                     &field_trials,
                     None,
                 )?;
-                let mut done = false;
-                while !done {
-                    // We may need to try a few times to get these; they're not necessarily
-                    // populated instantly. Ideally we could use the callbacks to notify us
-                    // when these are populated, but that's slightly tricky, because we might
-                    // fetch the devices before callback registration, and they're device
-                    // **change** callbacks.
-                    thread::sleep(Duration::from_millis(100));
-                    done = peer_connection_factory
-                        .get_audio_playout_devices()
-                        .is_ok_and(|d| !d.is_empty())
-                        && peer_connection_factory
-                            .get_audio_recording_devices()
-                            .is_ok_and(|d| !d.is_empty())
-                }
-                info!(
-                    "Audio playout devices: {:?}",
-                    peer_connection_factory.get_audio_playout_devices()
-                );
-                info!(
-                    "Audio recording devices: {:?}",
-                    peer_connection_factory.get_audio_recording_devices()
-                );
-                peer_connection_factory.set_audio_playout_device(0).unwrap();
-                peer_connection_factory
-                    .set_audio_recording_device(0)
-                    .unwrap();
+
+                set_default_audio_devices(&mut peer_connection_factory).unwrap();
 
                 // Set up signaling/state
                 signaling_server.register(&endpoint);
