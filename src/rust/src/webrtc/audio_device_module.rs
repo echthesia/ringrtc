@@ -29,11 +29,11 @@ use webrtc::sim::audio_device_module::{Rust_needMorePlayData, Rust_recordedDataI
 use windows::Win32::System::Com;
 
 use crate::{
+    core::util::truncate_for_logging,
     webrtc,
     webrtc::{
         audio_device_module_utils::{
             DeviceCollectionWrapper, copy_and_truncate_string, do_cubeb_redactions,
-            redact_for_logging,
         },
         peer_connection_factory::{AudioDevice, AudioDeviceObserver},
     },
@@ -713,7 +713,7 @@ impl Worker {
                     } else {
                         Err(anyhow!(
                             "Invalid playout device id {} requested",
-                            redact_for_logging(id)
+                            truncate_for_logging(id)
                         ))
                     }
                 }
@@ -734,7 +734,7 @@ impl Worker {
                     } else {
                         Err(anyhow!(
                             "Invalid recording device id {} requested",
-                            redact_for_logging(id)
+                            truncate_for_logging(id)
                         ))
                     }
                 }
@@ -1164,9 +1164,9 @@ impl AudioDeviceModule {
             ),
             device.devid(),
             // Truncate these fields, as they can contain e.g. mac addresses or user-specified names.
-            device.device_id().map(redact_for_logging),
-            device.friendly_name().map(redact_for_logging),
-            device.group_id().map(redact_for_logging),
+            device.device_id().map(truncate_for_logging),
+            device.friendly_name().map(truncate_for_logging),
+            device.group_id().map(truncate_for_logging),
             device.vendor_name(),
             device.device_type(),
             device.state(),
@@ -1606,7 +1606,7 @@ impl AudioDeviceModule {
             }
             bail!(
                 "No {device_type:?} device with ID {}",
-                redact_for_logging(id)
+                truncate_for_logging(id)
             );
         }
         Ok(())

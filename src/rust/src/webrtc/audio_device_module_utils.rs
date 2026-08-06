@@ -21,7 +21,9 @@ use cubeb_core::{DeviceId, DevicePref};
 type StaticRegex =
     regex_automata::dfa::regex::Regex<regex_automata::dfa::sparse::DFA<&'static [u8]>>;
 
-use crate::{webrtc, webrtc::peer_connection_factory::AudioDevice};
+use crate::{
+    core::util::truncate_for_logging, webrtc, webrtc::peer_connection_factory::AudioDevice,
+};
 
 #[derive(PartialEq, Eq, Debug, Clone)]
 pub struct MinimalDeviceInfo {
@@ -252,38 +254,6 @@ pub fn copy_and_truncate_string(
     Ok(())
 }
 
-/// Redact the given string |s| by retaining only a brief prefix and suffix, to match
-/// Desktop's truncateForLogging format.
-/// If the string contains unicode, only output one character.
-pub fn redact_for_logging(s: &str) -> String {
-    if cfg!(debug_assertions) && !cfg!(test) {
-        // For debug testing/local builds only, allow the full string.
-        s.to_string()
-    } else {
-        // Take a small number of characters, but fewer if they are non-ascii unicode, as
-        // unicode provides a substantially higher amount of information per char.
-        // (e.g. four mandarin characters could be a full name)
-        let out: String = if s.is_ascii() {
-            let n = s.chars().by_ref().count();
-            if n <= 4 {
-                return s.to_string();
-            }
-            let mut chars = s.chars();
-            let mut out: String = chars.by_ref().take(2).collect();
-            out.push_str("...");
-            // n - 4 because we're reusing the iterator we took 2 from
-            out.extend(chars.skip(n - 4));
-            out
-        } else {
-            if s.chars().count() <= 1 {
-                return s.to_string();
-            }
-            s.chars().take(1).chain("...".chars()).collect()
-        };
-        out
-    }
-}
-
 struct RedactionSpec {
     /// first_to_keep tells us two things if it matches:
     ///
@@ -312,14 +282,14 @@ struct RedactionSpec {
     first_to_keep: StaticRegex,
     /// An **ordered** list of remaining segments to **keep**.
     /// That is to say, for each i from 0 to rest_to_keep.len() - 1,
-    /// redact_for_logging the substring between
+    /// truncate_for_logging the substring between
     /// rest_to_keep[i].find(...).end() and rest_to_keep[i + 1].find(...).start().
-    /// Additionally, redact_for_logging the substring from first_to_keep.find(...).end() to
+    /// Additionally, truncate_for_logging the substring from first_to_keep.find(...).end() to
     /// rest_to_keep[0].find(...).start(), and from rest_to_keep[-1].find(...).end() to the
     /// end of the string.
     ///
     /// If rest_to_keep has any elements that do not match, fail conservatively by assuming
-    /// any remaining substring is sensitive and passing it to redact_for_logging. This may
+    /// any remaining substring is sensitive and passing it to truncate_for_logging. This may
     /// happen if cubeb truncated the line.
     rest_to_keep: Vec<StaticRegex>,
 }
@@ -341,7 +311,7 @@ impl RedactionSpec {
 
             // We have found a substring that is not "allowlisted"; redact it.
             if start != end_of_previous_match {
-                result.push_str(&redact_for_logging(&text[end_of_previous_match..start]));
+                result.push_str(&truncate_for_logging(&text[end_of_previous_match..start]));
             }
             result.push_str(&text[start..end]);
 
@@ -359,7 +329,7 @@ impl RedactionSpec {
 
         if end_of_previous_match != text.len() {
             // we must also redact the end of the string
-            result.push_str(&redact_for_logging(&text[end_of_previous_match..]))
+            result.push_str(&truncate_for_logging(&text[end_of_previous_match..]))
         }
 
         result.into()
@@ -467,7 +437,7 @@ pub fn do_cubeb_redactions(text: &str) -> Option<String> {
     let Some(ident_match) = identifier_re.find(text) else {
         // Log this so we know the regex has a bug, but also redact because
         // content may be sensitive.
-        return Some(format!("BAD CUBEB FORMAT: {}", redact_for_logging(text)));
+        return Some(format!("BAD CUBEB FORMAT: {}", truncate_for_logging(text)));
     };
     let ident = &text[ident_match.start()..ident_match.end()];
 
@@ -576,24 +546,6 @@ mod audio_device_module_tests {
         let src = "AA";
         let out = webrtc::ptr::Borrowed::null();
         assert!(copy_and_truncate_string(src, out, 5).is_err());
-    }
-
-    #[test]
-    fn redaction_tests() {
-        assert_eq!(redact_for_logging("0123456789"), "01...89");
-        assert_eq!(redact_for_logging("0123"), "0123");
-        assert_eq!(redact_for_logging("0"), "0");
-        assert_eq!(redact_for_logging("你好"), "你..."); // ni hao (hello)
-        assert_eq!(redact_for_logging("你"), "你");
-        // This is not necessarily behavior we want to enforce, but the test is here for
-        // documentation of the limitations of this implementation:
-        // the string y̆, which looks like one character to humans, is represented as
-        // two Unicode Scalar Values: y and \u{0306}.
-        // Rust's standard library does not provide functionality to iterate by "grapheme clusters."
-        //
-        // While we could get such a library from crates.io, it would require us to build in a
-        // (large) unicode table to the compiled library.
-        assert_eq!(redact_for_logging("y̆ is from rust str docs"), "y...");
     }
 
     #[test]

@@ -9,7 +9,7 @@
 use std::ffi::c_void;
 #[cfg(feature = "native")]
 use std::sync::{Arc, Mutex};
-use std::{ffi::CString, os::raw::c_char};
+use std::{ffi::CString, fmt::Formatter, os::raw::c_char};
 
 #[cfg(feature = "native")]
 use anyhow::anyhow;
@@ -27,6 +27,7 @@ use crate::webrtc::injectable_network::InjectableNetwork;
 use crate::webrtc::sim::peer_connection_factory as pcf;
 use crate::{
     common::Result,
+    core::util::truncate_for_logging,
     error::RingRtcError,
     webrtc,
     webrtc::{
@@ -113,7 +114,7 @@ pub struct RffiIceServers {
 }
 
 /// Describes an audio input or output device.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct AudioDevice {
     /// Name of the device
     pub name: String,
@@ -121,6 +122,17 @@ pub struct AudioDevice {
     pub unique_id: String,
     /// If the name requires translation, the translated string identifier.
     pub i18n_key: String,
+}
+
+impl std::fmt::Debug for AudioDevice {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "AudioDevice{{ name: {}, unique_id: {} }}",
+            truncate_for_logging(&self.name),
+            truncate_for_logging(&self.unique_id)
+        )
+    }
 }
 
 /// Stays in sync with RffiAudioConfig in peer_connection_factory.h.
