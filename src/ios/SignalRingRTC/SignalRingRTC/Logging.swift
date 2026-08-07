@@ -7,7 +7,9 @@
 // a Delegate implemented by the application.
 
 import SignalRingRTC.RingRTC
+#if canImport(WebRTC)
 import WebRTC
+#endif
 
 public enum RingRTCLogLevel: UInt8, Comparable {
     // These values correspond to values from log::Level (in the log crate)
@@ -21,6 +23,7 @@ public enum RingRTCLogLevel: UInt8, Comparable {
         return RingRTCLogLevel(rawValue: rtcLevel)
     }
 
+#if canImport(WebRTC)
     var toWebRTC: RTCLoggingSeverity {
         switch self {
         case .error:
@@ -33,6 +36,7 @@ public enum RingRTCLogLevel: UInt8, Comparable {
             return .verbose
         }
     }
+#endif
 
     public static func < (lhs: RingRTCLogLevel, rhs: RingRTCLogLevel) -> Bool {
         // Lower log levels == less log output

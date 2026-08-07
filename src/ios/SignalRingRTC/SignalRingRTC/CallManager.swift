@@ -201,24 +201,6 @@ public enum RingCancelReason: Int32 {
     case busy
 }
 
-@available(iOSApplicationExtension, unavailable)
-public enum RingUpdate: Int32 {
-    /// The sender is trying to ring this user.
-    case requested = 0
-    /// The sender tried to ring this user, but it's been too long.
-    case expiredRing
-    /// Call was accepted elsewhere by a different device.
-    case acceptedOnAnotherDevice
-    /// Call was declined elsewhere by a different device.
-    case declinedOnAnotherDevice
-    /// This device is currently on a different call.
-    case busyLocally
-    /// A different device is currently on a different call.
-    case busyOnAnotherDevice
-    /// The sender cancelled the ring request.
-    case cancelledByRinger
-}
-
 /// Class to wrap the group call dictionary so group call objects can reference
 /// it. All operations must be done on the main thread.
 @available(iOSApplicationExtension, unavailable)
