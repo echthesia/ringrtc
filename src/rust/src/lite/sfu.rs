@@ -729,7 +729,7 @@ pub fn join(
     );
 }
 
-#[cfg(any(target_os = "ios", feature = "check-all"))]
+#[cfg(any(target_os = "ios", target_os = "watchos", feature = "check-all"))]
 pub mod ios {
     use std::{
         ffi::{CStr, c_char},

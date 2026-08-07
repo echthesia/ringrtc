@@ -239,7 +239,7 @@ impl ResponseCallbacks {
     }
 }
 
-#[cfg(any(target_os = "ios", feature = "check-all"))]
+#[cfg(any(target_os = "ios", target_os = "watchos", feature = "check-all"))]
 pub mod ios {
     use libc::{c_void, size_t};
 

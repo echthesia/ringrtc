@@ -75,7 +75,7 @@ mod android {
     mod webrtc_peer_connection_factory;
 }
 
-#[cfg(any(target_os = "ios", feature = "check-all"))]
+#[cfg(any(target_os = "ios", target_os = "watchos", feature = "check-all"))]
 /// iOS specific implementation.
 mod ios {
     mod api {
