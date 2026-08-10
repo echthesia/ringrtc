@@ -1636,9 +1636,8 @@ where
         self.set_incoming_media(incoming_media)
     }
 
-    /// Connect incoming media (stored by webrtc.incoming_media) to the call, and enable
-    /// audio playout, incoming and outgoing RTP, and finally audio recording. The client
-    /// should be notified that media is flowing.
+    /// Connect incoming media (stored by webrtc.incoming_media) to the call and start
+    /// audio and RTP flows. The client should be notified that media is flowing.
     pub fn enable_media(&self) -> Result<()> {
         info!("enable_media(): id: {}", self.connection_id);
 
@@ -1649,10 +1648,21 @@ where
 
         let webrtc = self.webrtc.lock()?;
         let pc = webrtc.peer_connection()?;
-        pc.set_audio_playout_enabled(true);
-        pc.set_incoming_media_enabled(true);
-        pc.set_outgoing_media_enabled(true);
-        pc.set_audio_recording_enabled(true);
+        if self.direction() == CallDirection::Incoming {
+            // callee dictates accept timing and can send media first
+            // so setup outgoing/recording before setting up incoming/playout
+            pc.set_outgoing_media_enabled(true);
+            pc.set_audio_recording_enabled(true);
+            pc.set_audio_playout_enabled(true);
+            pc.set_incoming_media_enabled(true);
+        } else {
+            // caller waits for accept and prioritizes receiving media first
+            // so setup incoming/playout before setting up outgoing/recording
+            pc.set_audio_playout_enabled(true);
+            pc.set_incoming_media_enabled(true);
+            pc.set_outgoing_media_enabled(true);
+            pc.set_audio_recording_enabled(true);
+        }
 
         let incoming_media = match webrtc.incoming_media.as_ref() {
             Some(v) => v,
