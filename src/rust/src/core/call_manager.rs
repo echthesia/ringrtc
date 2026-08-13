@@ -3313,10 +3313,13 @@ where
     forward_group_call_api!(set_sharing_screen(sharing_screen: bool));
     forward_group_call_api!(resend_media_keys());
     forward_group_call_api!(set_data_mode(data_mode: DataMode));
-    forward_group_call_api!(request_video(
-        rendered_resolutions: Vec<group_call::VideoRequest>,
-        active_speaker_height: u16,
-    ), false);
+    forward_group_call_api!(
+        request_video(
+            rendered_resolutions: Vec<group_call::VideoRequest>,
+            active_speaker_height: u16,
+        ),
+        false
+    );
     forward_group_call_api!(approve_user(user_id: UserId));
     forward_group_call_api!(deny_user(user_id: UserId));
     forward_group_call_api!(remove_client(other_client_id: DemuxId));
