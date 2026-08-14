@@ -13,7 +13,7 @@ use crate::{
     common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result},
     core::{
         call_manager,
-        call_manager::CallManager,
+        call_manager::{CallManager, CreateCallLinkCallParams, CreateGroupCallParams, SvcConfig},
         group_call, signaling,
         util::{ptr_as_box, ptr_as_mut},
     },
@@ -396,6 +396,7 @@ pub fn create_group_call_client(
     hkdf_extra_info: Vec<u8>,
     audio_levels_interval: Option<Duration>,
     dred_duration: u8,
+    svc_config: Option<SvcConfig>,
     native_peer_connection_factory: webrtc::ptr::OwnedRc<pcf::RffiPeerConnectionFactoryInterface>,
     native_audio_track: webrtc::ptr::OwnedRc<media::RffiAudioTrack>,
     native_video_track: webrtc::ptr::OwnedRc<media::RffiVideoTrack>,
@@ -417,17 +418,18 @@ pub fn create_group_call_client(
     );
 
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
-    call_manager.create_group_call_client(
+    call_manager.create_group_call_client(CreateGroupCallParams {
         group_id,
         sfu_url,
         hkdf_extra_info,
         audio_levels_interval,
         dred_duration,
-        Some(peer_connection_factory),
+        svc_config,
+        peer_connection_factory: Some(peer_connection_factory),
         outgoing_audio_track,
         outgoing_video_track,
-        None,
-    )
+        incoming_video_sink: None,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -441,6 +443,7 @@ pub fn create_call_link_call_client(
     hkdf_extra_info: Vec<u8>,
     audio_levels_interval: Option<Duration>,
     dred_duration: u8,
+    svc_config: Option<SvcConfig>,
     native_peer_connection_factory: webrtc::ptr::OwnedRc<pcf::RffiPeerConnectionFactoryInterface>,
     native_audio_track: webrtc::ptr::OwnedRc<media::RffiAudioTrack>,
     native_video_track: webrtc::ptr::OwnedRc<media::RffiVideoTrack>,
@@ -462,20 +465,21 @@ pub fn create_call_link_call_client(
     );
 
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
-    call_manager.create_call_link_call_client(
+    call_manager.create_call_link_call_client(CreateCallLinkCallParams {
         sfu_url,
-        &endorsement_public_key,
-        &auth_credential_presentation,
+        endorsement_public_key: &endorsement_public_key,
+        auth_presentation: &auth_credential_presentation,
         root_key,
         admin_passkey,
         hkdf_extra_info,
         audio_levels_interval,
         dred_duration,
-        Some(peer_connection_factory),
+        svc_config,
+        peer_connection_factory: Some(peer_connection_factory),
         outgoing_audio_track,
         outgoing_video_track,
-        None,
-    )
+        incoming_video_sink: None,
+    })
 }
 
 pub fn delete_group_call_client(

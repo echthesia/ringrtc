@@ -25,7 +25,7 @@ use crate::{
     },
     common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result},
     core::{
-        call_manager::CallManager,
+        call_manager::{CallManager, CreateCallLinkCallParams, CreateGroupCallParams, SvcConfig},
         connection::Connection,
         group_call, signaling,
         util::{ptr_as_box, ptr_as_mut},
@@ -851,6 +851,7 @@ pub fn create_group_call_client(
     hkdf_extra_info: JByteArray,
     audio_levels_interval_millis: jint,
     dred_duration: jbyte,
+    svc_config: JObject,
     native_pcf_borrowed_rc: jlong,
     native_audio_track_borrowed_rc: jlong,
     native_video_track_borrowed_rc: jlong,
@@ -893,18 +894,21 @@ pub fn create_group_call_client(
         Some(Duration::from_millis(audio_levels_interval_millis as u64))
     };
 
+    let svc_config = jobject_to_svc_config(env, svc_config)?;
+
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
-    call_manager.create_group_call_client(
+    call_manager.create_group_call_client(CreateGroupCallParams {
         group_id,
         sfu_url,
         hkdf_extra_info,
         audio_levels_interval,
-        dred_duration as u8,
-        Some(peer_connection_factory),
+        dred_duration: dred_duration as u8,
+        svc_config,
+        peer_connection_factory: Some(peer_connection_factory),
         outgoing_audio_track,
         outgoing_video_track,
-        None,
-    )
+        incoming_video_sink: None,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -919,6 +923,7 @@ pub fn create_call_link_call_client(
     hkdf_extra_info: JByteArray,
     audio_levels_interval_millis: jint,
     dred_duration: jbyte,
+    svc_config: JObject,
     native_pcf_borrowed_rc: jlong,
     native_audio_track_borrowed_rc: jlong,
     native_video_track_borrowed_rc: jlong,
@@ -969,21 +974,24 @@ pub fn create_call_link_call_client(
         Some(Duration::from_millis(audio_levels_interval_millis as u64))
     };
 
+    let svc_config = jobject_to_svc_config(env, svc_config)?;
+
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
-    call_manager.create_call_link_call_client(
+    call_manager.create_call_link_call_client(CreateCallLinkCallParams {
         sfu_url,
-        &endorsement_public_key,
-        &auth_presentation,
+        endorsement_public_key: &endorsement_public_key,
+        auth_presentation: &auth_presentation,
         root_key,
         admin_passkey,
         hkdf_extra_info,
         audio_levels_interval,
-        dred_duration as u8,
-        Some(peer_connection_factory),
+        dred_duration: dred_duration as u8,
+        svc_config,
+        peer_connection_factory: Some(peer_connection_factory),
         outgoing_audio_track,
         outgoing_video_track,
-        None,
-    )
+        incoming_video_sink: None,
+    })
 }
 
 pub fn delete_group_call_client(
@@ -1299,4 +1307,43 @@ fn jint_to_restrictions(raw_restrictions: jint) -> Option<CallLinkRestrictions> 
         1 => Some(CallLinkRestrictions::AdminApproval),
         _ => None,
     }
+}
+
+fn jobject_to_svc_config(env: &mut Env, svc_config: JObject) -> Result<Option<SvcConfig>> {
+    const STRING_TYPE: FieldSignature<'static> = jni_sig!(java.lang.String);
+    const NULLABLE_INT_TYPE: FieldSignature<'static> = jni_sig!(java.lang.Integer);
+
+    if svc_config.is_null() {
+        return Ok(None);
+    }
+
+    let mode = env
+        .get_field(&svc_config, jni_str!("mode"), &STRING_TYPE)?
+        .into_object()?;
+    let mode = env.cast_local::<JString>(mode)?.try_to_string(env)?;
+    let mode_for_screenshare = env
+        .get_field(&svc_config, jni_str!("modeForScreenshare"), &STRING_TYPE)?
+        .into_object()?;
+    let mode_for_screenshare = env
+        .cast_local::<JString>(mode_for_screenshare)?
+        .try_to_string(env)?;
+    let max_bitrate_bps = env
+        .get_field(&svc_config, jni_str!("maxBitrateBps"), &NULLABLE_INT_TYPE)?
+        .into_object()?;
+    let max_bitrate_bps = if max_bitrate_bps.is_null() {
+        None
+    } else {
+        let value = env.call_method(
+            max_bitrate_bps,
+            jni_str!("intValue"),
+            jni_sig!(() -> int),
+            &[],
+        )?;
+        Some(value.into_int()?)
+    };
+    Ok(Some(SvcConfig {
+        mode,
+        mode_for_screenshare,
+        max_bitrate_bps,
+    }))
 }

@@ -1324,6 +1324,7 @@ public class CallManager {
    * @param audioLevelsIntervalMs  if provided, the observer will receive audio level callbacks at this interval
    * @param dredDuration           if provided, client will encode DRED PLC for the period specified
    * @param audioConfig            the audio configuration to use
+   * @param svcConfig              if provided, the SVC configuration to use
    * @param observer               the observer that the group call object will use for callback notifications
    *
    */
@@ -1334,6 +1335,7 @@ public class CallManager {
                                    @Nullable Integer            audioLevelsIntervalMs,
                                    @Nullable Byte               dredDuration,
                                    @NonNull  AudioConfig        audioConfig,
+                                   @Nullable SvcConfig          svcConfig,
                                    @NonNull  GroupCall.Observer observer)
   {
     checkCallManagerExists();
@@ -1347,7 +1349,7 @@ public class CallManager {
       }
     }
 
-    GroupCall groupCall = GroupCall.create(nativeCallManager, groupId, sfuUrl, hkdfExtraInfo, audioLevelsIntervalMs, dredDuration, this.groupFactory, observer);
+    GroupCall groupCall = GroupCall.create(nativeCallManager, groupId, sfuUrl, hkdfExtraInfo, audioLevelsIntervalMs, dredDuration, svcConfig, this.groupFactory, observer);
 
     if (groupCall != null) {
       // Add the groupCall to the map.
@@ -1376,6 +1378,7 @@ public class CallManager {
    * @param audioLevelsIntervalMs      if provided, the observer will receive audio level callbacks at this interval
    * @param dredDuration               if provided, client will encode DRED PLC for the period specified
    * @param audioConfig                the audio configuration to use
+   * @param svcConfig                  if provided, the SVC configuration to use
    * @param observer                   the observer that the group call object will use for callback notifications
    *
    * @throws CallException for native code failures
@@ -1391,6 +1394,7 @@ public class CallManager {
                                       @Nullable Integer               audioLevelsIntervalMs,
                                       @Nullable Byte                  dredDuration,
                                       @NonNull  AudioConfig           audioConfig,
+                                      @Nullable SvcConfig             svcConfig,
                                       @NonNull  GroupCall.Observer    observer)
   {
     checkCallManagerExists();
@@ -1404,7 +1408,7 @@ public class CallManager {
       }
     }
 
-    GroupCall groupCall = GroupCall.create(nativeCallManager, sfuUrl, endorsementPublicKey, authCredentialPresentation, linkRootKey, adminPasskey, hkdfExtraInfo, audioLevelsIntervalMs, dredDuration, this.groupFactory, observer);
+    GroupCall groupCall = GroupCall.create(nativeCallManager, sfuUrl, endorsementPublicKey, authCredentialPresentation, linkRootKey, adminPasskey, hkdfExtraInfo, audioLevelsIntervalMs, dredDuration, svcConfig, this.groupFactory, observer);
 
     if (groupCall != null) {
       // Add the groupCall to the map.

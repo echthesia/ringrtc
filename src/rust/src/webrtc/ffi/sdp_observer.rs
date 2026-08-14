@@ -109,6 +109,9 @@ unsafe extern "C" {
         local_demux_id: u32,
         remote_demux_ids_data: webrtc::ptr::Borrowed<u32>,
         remote_demux_ids_len: size_t,
+        remote_demux_ids_require_svc_data: webrtc::ptr::Borrowed<u32>,
+        remote_demux_ids_require_svc_len: size_t,
+        enable_svc: bool,
     ) -> webrtc::ptr::Owned<RffiSessionDescription>;
 
     pub fn Rust_remoteDescriptionForGroupCall(
@@ -118,6 +121,9 @@ unsafe extern "C" {
         local_demux_id: u32,
         remote_demux_ids_data: webrtc::ptr::Borrowed<u32>,
         remote_demux_ids_len: size_t,
+        remote_demux_ids_require_svc_data: webrtc::ptr::Borrowed<u32>,
+        remote_demux_ids_require_svc_len: size_t,
+        enable_svc: bool,
     ) -> webrtc::ptr::Owned<RffiSessionDescription>;
 
     pub fn Rust_deleteSessionDescription(sdi: webrtc::ptr::Owned<RffiSessionDescription>);

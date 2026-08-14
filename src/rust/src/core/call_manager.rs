@@ -391,6 +391,42 @@ struct GroupCallClient {
     active: bool,
 }
 
+#[derive(Debug)]
+pub struct SvcConfig {
+    pub mode: String,
+    pub mode_for_screenshare: String,
+    pub max_bitrate_bps: Option<i32>,
+}
+
+pub struct CreateGroupCallParams {
+    pub group_id: group_call::GroupId,
+    pub sfu_url: String,
+    pub hkdf_extra_info: Vec<u8>,
+    pub audio_levels_interval: Option<Duration>,
+    pub dred_duration: u8,
+    pub svc_config: Option<SvcConfig>,
+    pub peer_connection_factory: Option<PeerConnectionFactory>,
+    pub outgoing_audio_track: AudioTrack,
+    pub outgoing_video_track: VideoTrack,
+    pub incoming_video_sink: Option<Box<dyn VideoSink>>,
+}
+
+pub struct CreateCallLinkCallParams<'a> {
+    pub sfu_url: String,
+    pub endorsement_public_key: &'a [u8],
+    pub auth_presentation: &'a [u8],
+    pub root_key: CallLinkRootKey,
+    pub admin_passkey: Option<Vec<u8>>,
+    pub hkdf_extra_info: Vec<u8>,
+    pub audio_levels_interval: Option<Duration>,
+    pub dred_duration: u8,
+    pub svc_config: Option<SvcConfig>,
+    pub peer_connection_factory: Option<PeerConnectionFactory>,
+    pub outgoing_audio_track: AudioTrack,
+    pub outgoing_video_track: VideoTrack,
+    pub incoming_video_sink: Option<Box<dyn VideoSink>>,
+}
+
 pub struct CallManager<T>
 where
     T: Platform,
@@ -3020,19 +3056,23 @@ where
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_group_call_client(
         &mut self,
-        group_id: group_call::GroupId,
-        sfu_url: String,
-        hkdf_extra_info: Vec<u8>,
-        audio_levels_interval: Option<Duration>,
-        dred_duration: u8,
-        peer_connection_factory: Option<PeerConnectionFactory>,
-        outgoing_audio_track: AudioTrack,
-        outgoing_video_track: VideoTrack,
-        incoming_video_sink: Option<Box<dyn VideoSink>>,
+        params: CreateGroupCallParams,
     ) -> Result<group_call::ClientId> {
+        let CreateGroupCallParams {
+            group_id,
+            sfu_url,
+            hkdf_extra_info,
+            audio_levels_interval,
+            dred_duration,
+            svc_config,
+            peer_connection_factory,
+            outgoing_audio_track,
+            outgoing_video_track,
+            incoming_video_sink,
+        } = params;
+
         info!("create_group_call_client():");
         debug!(
             "  group_id: {} sfu_url: {}",
@@ -3103,6 +3143,7 @@ where
             audio_levels_interval,
             dred_duration,
             group_send_endorsement_cache: None,
+            svc_config,
         })?;
 
         client_by_id.insert(
@@ -3118,22 +3159,26 @@ where
         Ok(client_id)
     }
 
-    #[allow(clippy::too_many_arguments)]
     pub fn create_call_link_call_client(
         &mut self,
-        sfu_url: String,
-        endorsement_public_key: &[u8],
-        auth_presentation: &[u8],
-        root_key: CallLinkRootKey,
-        admin_passkey: Option<Vec<u8>>,
-        hkdf_extra_info: Vec<u8>,
-        audio_levels_interval: Option<Duration>,
-        dred_duration: u8,
-        peer_connection_factory: Option<PeerConnectionFactory>,
-        outgoing_audio_track: AudioTrack,
-        outgoing_video_track: VideoTrack,
-        incoming_video_sink: Option<Box<dyn VideoSink>>,
-    ) -> Result<group_call::ClientId> {
+        params: CreateCallLinkCallParams,
+    ) -> Result<ClientId> {
+        let CreateCallLinkCallParams {
+            sfu_url,
+            endorsement_public_key,
+            auth_presentation,
+            root_key,
+            admin_passkey,
+            hkdf_extra_info,
+            audio_levels_interval,
+            dred_duration,
+            svc_config,
+            peer_connection_factory,
+            outgoing_audio_track,
+            outgoing_video_track,
+            incoming_video_sink,
+        } = params;
+
         info!("create_call_link_call_client():");
         let room_id: group_call::GroupId = root_key.derive_room_id();
         debug!(
@@ -3211,6 +3256,7 @@ where
             audio_levels_interval,
             dred_duration,
             group_send_endorsement_cache,
+            svc_config,
         })?;
 
         client_by_id.insert(
@@ -3327,6 +3373,9 @@ where
     forward_group_call_api!(set_group_members(members: Vec<GroupMember>));
     forward_group_call_api!(set_membership_proof(proof: Vec<u8>));
     forward_group_call_api!(set_rtc_stats_interval(interval: Duration));
+    forward_group_call_api!(
+        reconfigure_video_encoder_for_screenshare(video_track: VideoTrack, is_screenshare: bool)
+    );
 
     pub fn disconnect(&mut self, client_id: group_call::ClientId) {
         info!("disconnect(): id: {}", client_id);

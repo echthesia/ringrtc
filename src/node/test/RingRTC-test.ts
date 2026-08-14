@@ -1156,6 +1156,7 @@ describe('RingRTC', () => {
         new Uint8Array(), // hkdf
         undefined, // audio levels
         undefined, // dred duration
+        undefined, // scalability mode
         observer
       );
       assert.isObject(call);

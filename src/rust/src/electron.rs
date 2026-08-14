@@ -27,7 +27,7 @@ use crate::{
     common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result},
     core::{
         assets::AssetHandle,
-        call_manager::CallManager,
+        call_manager::{CallManager, CreateCallLinkCallParams, CreateGroupCallParams, SvcConfig},
         call_summary::{CallSummary, MediaQualityStats, QualityStats},
         group_call::{self, GroupId, SignalingMessageUrgency},
         signaling,
@@ -592,6 +592,7 @@ fn to_js_peek_info<'a>(
         era_id,
         max_devices,
         call_link_state: _call_link_state,
+        ..
     } = &peek_info;
 
     let js_devices = JsArray::new(cx, devices.len());
@@ -1480,6 +1481,36 @@ fn receiveGroupCallVideoFrame(mut cx: FunctionContext) -> JsResult<JsValue> {
     receive_video_frame(&mut cx, rgba_buffer, remote_demux_id, max_width, max_height)
 }
 
+fn jsvalue_to_svc_config(
+    raw_svc_config: Handle<'_, JsValue>,
+    cx: &mut FunctionContext,
+) -> std::result::Result<Option<SvcConfig>, neon::result::Throw> {
+    if raw_svc_config.is_a::<JsUndefined, _>(cx) || raw_svc_config.is_a::<JsNull, _>(cx) {
+        Ok(None)
+    } else {
+        let raw_svc_config = raw_svc_config.downcast_or_throw::<JsObject, _>(cx)?;
+        let mode = raw_svc_config.get::<JsString, _, _>(cx, "mode")?.value(cx);
+        let mode_for_screenshare = raw_svc_config
+            .get::<JsString, _, _>(cx, "modeForScreenshare")?
+            .value(cx);
+        let max_bitrate_bps = raw_svc_config.get::<JsValue, _, _>(cx, "maxBitrateBps")?;
+        let max_bitrate_bps = if max_bitrate_bps.is_a::<JsUndefined, _>(cx) {
+            None
+        } else {
+            Some(
+                max_bitrate_bps
+                    .downcast_or_throw::<JsNumber, _>(cx)?
+                    .value(cx) as i32,
+            )
+        };
+        Ok(Some(SvcConfig {
+            mode,
+            mode_for_screenshare,
+            max_bitrate_bps,
+        }))
+    }
+}
+
 #[allow(non_snake_case)]
 fn createGroupCallClient(mut cx: FunctionContext) -> JsResult<JsValue> {
     let group_id = cx.argument::<JsUint8Array>(0)?.as_slice(&cx).to_vec();
@@ -1496,6 +1527,8 @@ fn createGroupCallClient(mut cx: FunctionContext) -> JsResult<JsValue> {
         Some(Duration::from_millis(audio_levels_interval_millis))
     };
 
+    let svc_config = jsvalue_to_svc_config(cx.argument::<JsValue>(5)?, &mut cx)?;
+
     with_call_endpoint(&mut cx, |endpoint| {
         endpoint.outgoing_video_source.adapt_output_format(
             GROUP_CALL_MAX_VIDEO_WIDTH,
@@ -1507,17 +1540,20 @@ fn createGroupCallClient(mut cx: FunctionContext) -> JsResult<JsValue> {
         let outgoing_audio_track = endpoint.outgoing_audio_track.clone();
         let outgoing_video_track = endpoint.outgoing_video_track.clone();
         let incoming_video_sink = endpoint.incoming_video_sink.clone();
-        let result = endpoint.call_manager.create_group_call_client(
-            group_id,
-            sfu_url,
-            hkdf_extra_info,
-            audio_levels_interval,
-            dred_duration,
-            Some(peer_connection_factory),
-            outgoing_audio_track,
-            outgoing_video_track,
-            Some(incoming_video_sink),
-        );
+        let result = endpoint
+            .call_manager
+            .create_group_call_client(CreateGroupCallParams {
+                group_id,
+                sfu_url,
+                hkdf_extra_info,
+                audio_levels_interval,
+                dred_duration,
+                svc_config,
+                peer_connection_factory: Some(peer_connection_factory),
+                outgoing_audio_track,
+                outgoing_video_track,
+                incoming_video_sink: Some(incoming_video_sink),
+            });
         if let Ok(v) = result {
             client_id = v;
         }
@@ -1557,6 +1593,8 @@ fn createCallLinkCallClient(mut cx: FunctionContext) -> JsResult<JsValue> {
         Some(Duration::from_millis(audio_levels_interval_millis))
     };
 
+    let svc_config = jsvalue_to_svc_config(cx.argument::<JsValue>(8)?, &mut cx)?;
+
     let mut client_id = group_call::INVALID_CLIENT_ID;
 
     with_call_endpoint(&mut cx, |endpoint| {
@@ -1564,20 +1602,23 @@ fn createCallLinkCallClient(mut cx: FunctionContext) -> JsResult<JsValue> {
         let outgoing_audio_track = endpoint.outgoing_audio_track.clone();
         let outgoing_video_track = endpoint.outgoing_video_track.clone();
         let incoming_video_sink = endpoint.incoming_video_sink.clone();
-        let result = endpoint.call_manager.create_call_link_call_client(
-            sfu_url,
-            &endorsement_public_key,
-            &auth_presentation,
-            root_key,
-            admin_passkey,
-            hkdf_extra_info,
-            audio_levels_interval,
-            dred_duration,
-            Some(peer_connection_factory),
-            outgoing_audio_track,
-            outgoing_video_track,
-            Some(incoming_video_sink),
-        );
+        let result = endpoint
+            .call_manager
+            .create_call_link_call_client(CreateCallLinkCallParams {
+                sfu_url,
+                endorsement_public_key: &endorsement_public_key,
+                auth_presentation: &auth_presentation,
+                root_key,
+                admin_passkey,
+                hkdf_extra_info,
+                audio_levels_interval,
+                dred_duration,
+                svc_config,
+                peer_connection_factory: Some(peer_connection_factory),
+                outgoing_audio_track,
+                outgoing_video_track,
+                incoming_video_sink: Some(incoming_video_sink),
+            });
         if let Ok(v) = result {
             client_id = v;
         }
@@ -1739,9 +1780,10 @@ fn setOutgoingGroupCallVideoIsScreenShare(mut cx: FunctionContext) -> JsResult<J
     let is_screenshare = cx.argument::<JsBoolean>(1)?.value(&mut cx);
 
     with_call_endpoint(&mut cx, |endpoint| {
+        let video_track = endpoint.outgoing_video_track.clone();
         endpoint
-            .outgoing_video_track
-            .set_content_hint(is_screenshare);
+            .call_manager
+            .reconfigure_video_encoder_for_screenshare(client_id, video_track, is_screenshare);
 
         let (width, height, fps) = if is_screenshare {
             // Remove limit
@@ -1760,6 +1802,7 @@ fn setOutgoingGroupCallVideoIsScreenShare(mut cx: FunctionContext) -> JsResult<J
         endpoint
             .call_manager
             .set_sharing_screen(client_id, is_screenshare);
+
         Ok(())
     })
     .or_else(|err: anyhow::Error| cx.throw_error(format!("{}", err)))?;

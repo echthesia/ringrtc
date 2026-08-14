@@ -109,6 +109,28 @@ impl PeerConnection {
         }
     }
 
+    pub fn set_scalability_mode(
+        &self,
+        scalability_mode: &str,
+        max_bitrate_bps: Option<i32>,
+    ) -> Result<()> {
+        let success = unsafe {
+            let scalability_mode_c = CString::new(scalability_mode)?;
+            let scalability_mode_ptr = webrtc::ptr::Borrowed::from_ptr(scalability_mode_c.as_ptr());
+            pc::Rust_setScalabilityMode(
+                self.rffi.as_borrowed(),
+                scalability_mode_ptr,
+                max_bitrate_bps.unwrap_or(-1),
+            )
+        };
+
+        if success {
+            Ok(())
+        } else {
+            Err(RingRtcError::EnableScalableVideoCoding.into())
+        }
+    }
+
     pub fn update_transceivers(&self, remote_demux_ids: &[u32]) -> Result<()> {
         let success = unsafe {
             pc::Rust_updateTransceivers(

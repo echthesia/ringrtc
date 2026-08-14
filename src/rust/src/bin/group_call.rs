@@ -289,6 +289,7 @@ fn main() {
         dred_duration: 0,
         group_send_endorsement_cache: None,
         asset_registry: AssetRegistry::default(),
+        svc_config: None,
     })
     .unwrap();
 

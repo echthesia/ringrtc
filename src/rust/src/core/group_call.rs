@@ -37,6 +37,7 @@ use crate::{
     },
     core::{
         assets::AssetRegistry,
+        call_manager::SvcConfig,
         call_mutex::CallMutex,
         call_summary::{CallSummary, GroupCallSummary},
         crypto::{self as frame_crypto, DecryptionErrorStats},
@@ -49,7 +50,7 @@ use crate::{
         call_links::CallLinkRootKey,
         http,
         sfu::{
-            self, ClientStatus, DemuxId, GroupMember, MemberMap, MembershipProof,
+            self, ClientStatus, DemuxId, GroupMember, JoinParams, MemberMap, MembershipProof,
             ObfuscatedResolver, PeekArgs, PeekInfo, PeekResult, PeekResultCallback, UserId,
         },
     },
@@ -550,7 +551,14 @@ pub struct Reaction {
 // The callbacks from the Client to the "SFU client" for the group call.
 pub trait SfuClient {
     // This should call Client.on_sfu_client_joined when the SfuClient has joined.
-    fn join(&mut self, ice_ufrag: &str, ice_pwd: &str, dhe_pub_key: [u8; 32], client: Client);
+    fn join(
+        &mut self,
+        ice_ufrag: &str,
+        ice_pwd: &str,
+        dhe_pub_key: [u8; 32],
+        requires_svc: bool,
+        client: Client,
+    );
     fn peek(&mut self, result_callback: PeekResultCallback);
 
     // Notifies the client of the new membership proof.
@@ -579,7 +587,7 @@ pub struct HttpSfuClient {
     http_client: Box<dyn http::Client + Send>,
     auth_header: Option<String>,
     member_resolver: Arc<dyn sfu::MemberResolver + Send + Sync>,
-    deferred_join: Option<(String, String, [u8; 32], Client)>,
+    deferred_join: Option<(String, String, [u8; 32], bool, Client)>,
 }
 
 impl HttpSfuClient {
@@ -621,21 +629,25 @@ impl HttpSfuClient {
         ice_ufrag: &str,
         ice_pwd: &str,
         dhe_pub_key: &[u8],
+        requires_svc: bool,
         client: Client,
     ) {
         let hkdf_extra_info = self.hkdf_extra_info.clone();
         sfu::join(
-            self.http_client.as_ref(),
-            &self.sfu_url,
-            self.room_id_header.clone(),
-            self.call_link_root_key,
-            auth_header,
-            self.admin_passkey.as_deref(),
-            ice_ufrag,
-            ice_pwd,
-            dhe_pub_key,
-            &self.hkdf_extra_info,
-            self.member_resolver.clone(),
+            JoinParams {
+                http_client: self.http_client.as_ref(),
+                sfu_url: &self.sfu_url,
+                room_id_header: self.room_id_header.clone(),
+                call_link_root_key: self.call_link_root_key,
+                auth_header,
+                admin_passkey: self.admin_passkey.as_deref(),
+                client_ice_ufrag: ice_ufrag,
+                client_ice_pwd: ice_pwd,
+                client_dhe_pub_key: dhe_pub_key,
+                hkdf_extra_info: &self.hkdf_extra_info,
+                requires_svc,
+                member_resolver: self.member_resolver.clone(),
+            },
             Box::new(move |join_response| {
                 let join_result: Result<Joined> = match join_response {
                     Ok(join_response) => Ok(Joined {
@@ -683,23 +695,44 @@ impl SfuClient for HttpSfuClient {
         if let Some(auth_header) = sfu::auth_header_from_membership_proof(&proof) {
             self.auth_header = Some(auth_header.clone());
             // Release any tasks that were blocked on getting the token.
-            if let Some((ice_ufrag, ice_pwd, dhe_pub_key, client)) = self.deferred_join.take() {
+            if let Some((ice_ufrag, ice_pwd, dhe_pub_key, requires_svc, client)) =
+                self.deferred_join.take()
+            {
                 info!("membership token received, proceeding with deferred join");
-                self.join_with_header(auth_header, &ice_ufrag, &ice_pwd, &dhe_pub_key[..], client);
+                self.join_with_header(
+                    auth_header,
+                    &ice_ufrag,
+                    &ice_pwd,
+                    &dhe_pub_key[..],
+                    requires_svc,
+                    client,
+                );
             }
         }
     }
 
-    fn join(&mut self, ice_ufrag: &str, ice_pwd: &str, dhe_pub_key: [u8; 32], client: Client) {
+    fn join(
+        &mut self,
+        ice_ufrag: &str,
+        ice_pwd: &str,
+        dhe_pub_key: [u8; 32],
+        requires_svc: bool,
+        client: Client,
+    ) {
         match self.auth_header.as_ref() {
-            Some(h) => {
-                self.join_with_header(h.clone(), ice_ufrag, ice_pwd, &dhe_pub_key[..], client)
-            }
+            Some(h) => self.join_with_header(
+                h.clone(),
+                ice_ufrag,
+                ice_pwd,
+                &dhe_pub_key[..],
+                requires_svc,
+                client,
+            ),
             None => {
                 info!("join requested without membership token - deferring");
                 let ice_ufrag = ice_ufrag.to_string();
                 let ice_pwd = ice_pwd.to_string();
-                self.deferred_join = Some((ice_ufrag, ice_pwd, dhe_pub_key, client));
+                self.deferred_join = Some((ice_ufrag, ice_pwd, dhe_pub_key, requires_svc, client));
             }
         }
     }
@@ -1025,6 +1058,7 @@ struct State {
     kind: GroupCallKind,
     sfu_client: Box<dyn SfuClient>,
     observer: Box<dyn Observer>,
+    svc_config: Option<SvcConfig>,
 
     call_summary: GroupCallSummary,
 
@@ -1262,6 +1296,7 @@ pub struct ClientStartParams {
     pub incoming_video_sink: Option<Box<dyn VideoSink>>,
     pub ring_id: Option<RingId>,
     pub audio_levels_interval: Option<Duration>,
+    pub svc_config: Option<SvcConfig>,
     pub dred_duration: u8,
     pub obfuscated_resolver: ObfuscatedResolver,
     pub group_send_endorsement_cache: Option<EndorsementsCache>,
@@ -1284,6 +1319,7 @@ impl Client {
             incoming_video_sink,
             ring_id,
             audio_levels_interval,
+            svc_config,
             dred_duration,
             obfuscated_resolver,
             group_send_endorsement_cache,
@@ -1370,6 +1406,7 @@ impl Client {
                     asset_registry,
                     local_ice_ufrag,
                     local_ice_pwd,
+                    svc_config,
 
                     call_summary,
 
@@ -1955,11 +1992,13 @@ impl Client {
                         let client_secret =
                             EphemeralSecret::random_from_rng(&mut UnwrapErr(SysRng));
                         let client_pub_key = PublicKey::from(&client_secret);
+                        let requires_svc = state.svc_config.is_some();
                         state.dhe_state = DheState::start(client_secret);
                         state.sfu_client.join(
                             &state.local_ice_ufrag,
                             &state.local_ice_pwd,
                             *client_pub_key.as_bytes(),
+                            requires_svc,
                             callback,
                         );
                     } else {
@@ -2978,12 +3017,12 @@ impl Client {
             match message {
                 protobuf::group_call::DeviceToDevice {
                     media_key:
-                        Some(protobuf::group_call::device_to_device::MediaKey {
-                            demux_id: Some(sender_demux_id),
-                            ratchet_counter: Some(ratchet_counter),
-                            secret: Some(secret_vec),
-                            ..
-                        }),
+                    Some(protobuf::group_call::device_to_device::MediaKey {
+                             demux_id: Some(sender_demux_id),
+                             ratchet_counter: Some(ratchet_counter),
+                             secret: Some(secret_vec),
+                             ..
+                         }),
                     ..
                 } => {
                     if let Ok(ratchet_counter) = ratchet_counter.try_into() {
@@ -3012,9 +3051,9 @@ impl Client {
                 protobuf::group_call::DeviceToDevice {
                     group_id: Some(group_id),
                     leaving: Some(protobuf::group_call::device_to_device::Leaving {
-                        demux_id: Some(leaving_demux_id),
-                        ..
-                    }),
+                                      demux_id: Some(leaving_demux_id),
+                                      ..
+                                  }),
                     ..
                 } => {
                     if group_id == state.group_id {
@@ -3040,7 +3079,15 @@ impl Client {
             state.client_id
         );
 
-        Self::set_peer_connection_descriptions(state, sfu_info, local_demux_id, srtp_keys)?;
+        Self::set_peer_connection_descriptions(state, sfu_info, local_demux_id, &[], srtp_keys)?;
+
+        // At this point, the transceivers have been created, and we can attempt to enable
+        // scalable video coding, if necessary.
+        if let Some(svc_config) = &state.svc_config {
+            state
+                .peer_connection
+                .set_scalability_mode(&svc_config.mode, svc_config.max_bitrate_bps)?
+        }
 
         for addr in &sfu_info.udp_addresses {
             // We use the octets instead of to_string() to bypass the IP address logging filter.
@@ -3160,6 +3207,14 @@ impl Client {
             return;
         }
         let peek_info = result.unwrap();
+
+        let demux_ids_require_svc: Vec<u32> = peek_info
+            .devices
+            .iter()
+            .chain(peek_info.pending_devices.iter())
+            .filter(|&device| device.requires_svc)
+            .map(|device| device.demux_id)
+            .collect();
 
         let is_first_peek_info = state.last_peek_info.is_none();
         let should_request_again = matches!(
@@ -3297,6 +3352,7 @@ impl Client {
                             state,
                             sfu_info,
                             local_demux_id,
+                            &demux_ids_require_svc,
                             srtp_keys,
                         );
                         if result.is_err() {
@@ -3326,6 +3382,7 @@ impl Client {
                             state,
                             sfu_info,
                             local_demux_id,
+                            &demux_ids_require_svc,
                             srtp_keys,
                         );
                         if result.is_err() {
@@ -3473,6 +3530,7 @@ impl Client {
         state: &State,
         sfu_info: &SfuInfo,
         local_demux_id: DemuxId,
+        remote_demux_ids_need_svc: &[DemuxId],
         srtp_keys: &SrtpKeys,
     ) -> Result<()> {
         let remote_demux_ids = state
@@ -3485,6 +3543,8 @@ impl Client {
             .peer_connection
             .update_transceivers(&remote_demux_ids)?;
 
+        let enable_svc = state.svc_config.is_some();
+
         // Call create_offer for the side effect of setting up the state of the RtpTransceivers
         // potentially created above.
         let observer = create_csd_observer(None);
@@ -3495,8 +3555,10 @@ impl Client {
             &state.local_ice_ufrag,
             &state.local_ice_pwd,
             &srtp_keys.client,
-            Some(local_demux_id),
+            local_demux_id,
             &remote_demux_ids,
+            remote_demux_ids_need_svc,
+            enable_svc,
         )?;
         let observer = create_ssd_observer();
         state
@@ -3510,13 +3572,59 @@ impl Client {
             &srtp_keys.server,
             local_demux_id,
             &remote_demux_ids,
+            remote_demux_ids_need_svc,
+            enable_svc,
         )?;
         let observer = create_ssd_observer();
         state
             .peer_connection
             .set_remote_description(observer.as_ref(), remote_description);
         observer.get_result()?;
+
         Ok(())
+    }
+
+    pub fn reconfigure_video_encoder_for_screenshare(
+        &self,
+        video_track: VideoTrack,
+        is_screenshare: bool,
+    ) {
+        debug!(
+            "group_call::Client(outer)::reconfigure_video_encoder_for_screenshare(client_id: {})",
+            self.client_id
+        );
+        self
+            .actor
+            .send(move |state| {
+                debug!(
+                    "group_call::Client(inner)::reconfigure_video_encoder_for_screenshare(client_id: {})",
+                    state.client_id
+                );
+                // When toggling SVC screenshare on, the encoder must be reconfigured before
+                // the content hint is set on the outgoing video track. Conversely, when toggling it
+                // off, the encoder must be reconfigured *after* the content hint is unset. For
+                // non-SVC calls, the order of invocation is irrelevant.
+                if is_screenshare {
+                    if let Some(svc_config) = &state.svc_config &&
+                        let Err(e) = state.peer_connection.set_scalability_mode(
+                            &svc_config.mode_for_screenshare,
+                            svc_config.max_bitrate_bps)
+                    {
+                        warn!("Failed to set scalability mode {}: {e}",
+                                svc_config.mode_for_screenshare);
+                    }
+                    video_track.set_content_hint(true);
+                } else {
+                    video_track.set_content_hint(false);
+                    if let Some(svc_config) = &state.svc_config &&
+                        let Err(e) = state.peer_connection.set_scalability_mode(
+                        &svc_config.mode,
+                        svc_config.max_bitrate_bps)
+                    {
+                        warn!("Failed to set scalability mode {}: {e}", svc_config.mode);
+                    }
+                }
+            });
     }
 
     fn rotate_media_send_key_and_send_to_users_not_removed(
@@ -4382,16 +4490,16 @@ impl Client {
                     );
                 }
                 self.actor.send(move |state| {
-                    let known = state
-                        .remote_devices
-                        .iter()
-                        .any(|rd| rd.demux_id == demux_id);
-                    if !known {
-                        // It's likely this demux_id just joined.
-                        debug!("Request devices because we just received a heartbeat from unknown demux_id = {}", demux_id);
-                        Self::request_remote_devices_as_soon_as_possible(state);
-                    }
-                });
+                        let known = state
+                            .remote_devices
+                            .iter()
+                            .any(|rd| rd.demux_id == demux_id);
+                        if !known {
+                            // It's likely this demux_id just joined.
+                            debug!("Request devices because we just received a heartbeat from unknown demux_id = {}", demux_id);
+                            Self::request_remote_devices_as_soon_as_possible(state);
+                        }
+                    });
             }
         } else {
             warn!(
@@ -4405,48 +4513,48 @@ impl Client {
         if let Some(mrp_header) = msg.mrp_header.as_ref() {
             let mrp_header = mrp_header.into();
             actor.send(move |state| {
-                match state
-                    .sfu_reliable_stream
-                    .receive_and_merge(&mrp_header, (header, msg))
-                {
-                    Ok(ready_packets) => {
-                        for (buffered_header, sfu_to_device) in ready_packets {
-                            // If content is present, we should not process any other fields on
-                            // this proto because that would allow for nested protos. Nested protos
-                            // cause thrashing, excessive updates, and hard to follow processing
-                            // order.
-                            if let Some(content) = sfu_to_device.content {
-                                match SfuToDevice::decode(content.as_slice()) {
-                                    Ok(msg) => Self::handle_sfu_to_device_inner(&state.actor, buffered_header, msg),
-                                    Err(err) => {
-                                        error!("Failed to decode content buffer in SfuToDevice: {:?}", err);
+                    match state
+                        .sfu_reliable_stream
+                        .receive_and_merge(&mrp_header, (header, msg))
+                    {
+                        Ok(ready_packets) => {
+                            for (buffered_header, sfu_to_device) in ready_packets {
+                                // If content is present, we should not process any other fields on
+                                // this proto because that would allow for nested protos. Nested protos
+                                // cause thrashing, excessive updates, and hard to follow processing
+                                // order.
+                                if let Some(content) = sfu_to_device.content {
+                                    match SfuToDevice::decode(content.as_slice()) {
+                                        Ok(msg) => Self::handle_sfu_to_device_inner(&state.actor, buffered_header, msg),
+                                        Err(err) => {
+                                            error!("Failed to decode content buffer in SfuToDevice: {:?}", err);
+                                        }
                                     }
+                                    return;
+                                } else {
+                                    Self::handle_sfu_to_device_inner(
+                                        &state.actor,
+                                        buffered_header,
+                                        sfu_to_device,
+                                    )
                                 }
-                                return;
-                            } else {
-                                Self::handle_sfu_to_device_inner(
-                                    &state.actor,
-                                    buffered_header,
-                                    sfu_to_device,
-                                )
                             }
                         }
-                    }
-                    err @ Err(MrpReceiveError::ReceiveWindowFull(_)) => {
-                        warn!(
+                        err @ Err(MrpReceiveError::ReceiveWindowFull(_)) => {
+                            warn!(
                             "Buffer full when receiving reliable SfuToDevice message, discarding. {:?}",
                             err
                         );
-                    }
+                        }
 
-                    Err(err) => {
-                        error!(
+                        Err(err) => {
+                            error!(
                             "Error when receiving reliable SfuToDevice message, discarded all drained packets {:?}",
                             err
                         );
-                    }
-                };
-            });
+                        }
+                    };
+                });
         } else {
             Self::handle_sfu_to_device_inner(actor, header, msg);
         }
@@ -4481,33 +4589,33 @@ impl Client {
         };
         if endorsements.is_some() || device_joined_or_left.is_some() {
             actor.send(move |state| {
-                let expiration = endorsements.and_then(|endorsements| {
-                    Self::handle_send_endorsements_response_inner(state, sys_now, endorsements)
-                });
+                    let expiration = endorsements.and_then(|endorsements| {
+                        Self::handle_send_endorsements_response_inner(state, sys_now, endorsements)
+                    });
 
-                if let Some(DeviceJoinedOrLeft { peek_info }) = device_joined_or_left {
-                    if let Some(peek_info_proto) = peek_info {
-                        match PeekInfo::deobfuscate_proto(
-                            peek_info_proto,
-                            &state.obfuscated_resolver,
-                        ) {
-                            Ok(peek_info) => {
-                                Self::set_peek_result_inner(state, Ok(peek_info), expiration)
-                            }
-                            Err(err) => {
-                                warn!(
+                    if let Some(DeviceJoinedOrLeft { peek_info }) = device_joined_or_left {
+                        if let Some(peek_info_proto) = peek_info {
+                            match PeekInfo::deobfuscate_proto(
+                                peek_info_proto,
+                                &state.obfuscated_resolver,
+                            ) {
+                                Ok(peek_info) => {
+                                    Self::set_peek_result_inner(state, Ok(peek_info), expiration)
+                                }
+                                Err(err) => {
+                                    warn!(
                                     "Failed to deobfuscate peek info, falling back to http: {:?}",
                                     err
                                 );
-                                Self::request_remote_devices_as_soon_as_possible(state);
+                                    Self::request_remote_devices_as_soon_as_possible(state);
+                                }
                             }
+                        } else {
+                            info!("SFU notified that a remote device has joined or left, requesting update");
+                            Self::request_remote_devices_as_soon_as_possible(state);
                         }
-                    } else {
-                        info!("SFU notified that a remote device has joined or left, requesting update");
-                        Self::request_remote_devices_as_soon_as_possible(state);
                     }
-                }
-            });
+                });
         }
 
         // TODO: Use all_demux_ids to avoid polling
@@ -4743,37 +4851,37 @@ impl Client {
         allocated_heights: Vec<u32>,
     ) {
         actor.send(move |state| {
-            let forwarding_videos: HashMap<DemuxId, u16> = demux_ids_with_video
-                .iter()
-                .zip(allocated_heights.iter())
-                .map(|(&demux_id, &height)| (demux_id, height as u16))
-                .collect();
-            if state.forwarding_videos != forwarding_videos {
-                demux_ids_with_video.sort_unstable();
-                info!(
+                let forwarding_videos: HashMap<DemuxId, u16> = demux_ids_with_video
+                    .iter()
+                    .zip(allocated_heights.iter())
+                    .map(|(&demux_id, &height)| (demux_id, height as u16))
+                    .collect();
+                if state.forwarding_videos != forwarding_videos {
+                    demux_ids_with_video.sort_unstable();
+                    info!(
                     "SFU notified that the forwarding videos changed. Demux IDs with video is now {:?}",
                     demux_ids_with_video
                 );
-                for remote_device in state.remote_devices.iter_mut() {
-                    let server_allocated_height = forwarding_videos.get(&remote_device.demux_id);
-                    let is_forwarding = server_allocated_height.is_some();
-                    remote_device.forwarding_video = Some(is_forwarding);
-                    remote_device.server_allocated_height = server_allocated_height.copied().unwrap_or(0);
+                    for remote_device in state.remote_devices.iter_mut() {
+                        let server_allocated_height = forwarding_videos.get(&remote_device.demux_id);
+                        let is_forwarding = server_allocated_height.is_some();
+                        remote_device.forwarding_video = Some(is_forwarding);
+                        remote_device.server_allocated_height = server_allocated_height.copied().unwrap_or(0);
 
-                    if !is_forwarding {
-                        remote_device.client_decoded_height = None;
+                        if !is_forwarding {
+                            remote_device.client_decoded_height = None;
+                        }
+
+                        remote_device.recalculate_higher_resolution_pending();
                     }
-
-                    remote_device.recalculate_higher_resolution_pending();
+                    state.forwarding_videos = forwarding_videos;
+                    state.observer.handle_remote_devices_changed(
+                        state.client_id,
+                        &state.remote_devices,
+                        RemoteDevicesChangedReason::ForwardedVideosChanged,
+                    )
                 }
-                state.forwarding_videos = forwarding_videos;
-                state.observer.handle_remote_devices_changed(
-                    state.client_id,
-                    &state.remote_devices,
-                    RemoteDevicesChangedReason::ForwardedVideosChanged,
-                )
-            }
-        })
+            })
     }
 
     fn handle_heartbeat_received(
@@ -4871,11 +4979,11 @@ impl Client {
             // It's also possible we have learned this before the SFU has, in which case the SFU may have stale data.
             // So let's wait a little while and ask again.
             state
-                .actor
-                .send_delayed(Duration::from_secs(2), move |state| {
-                    info!("Request devices because we received a leaving message from demux_id = {} a while ago", demux_id);
-                    Self::request_remote_devices_as_soon_as_possible(state);
-                });
+                    .actor
+                    .send_delayed(Duration::from_secs(2), move |state| {
+                        info!("Request devices because we received a leaving message from demux_id = {} a while ago", demux_id);
+                        Self::request_remote_devices_as_soon_as_possible(state);
+                    });
         }
     }
 
@@ -4940,21 +5048,21 @@ impl Client {
 
     fn handle_raised_hands(actor: &Actor<State>, raised_hands: Vec<DemuxId>, server_seqnum: u32) {
         actor.send(move |state| {
-            // The server has previously received a hand raise request from the client or admin
-            if server_seqnum != 0 {
-                if server_seqnum >= state.raise_hand_state.seqnum {
-                    // Set the local raised hand seqnum to the latest from the server
-                    state.raise_hand_state.seqnum = server_seqnum;
+                // The server has previously received a hand raise request from the client or admin
+                if server_seqnum != 0 {
+                    if server_seqnum >= state.raise_hand_state.seqnum {
+                        // Set the local raised hand seqnum to the latest from the server
+                        state.raise_hand_state.seqnum = server_seqnum;
 
-                    // Issue a callback when the seqnum value of the local demux id in the
-                    // servers list is equal to or greater than the local seqnum and a raised
-                    // hand is outstanding. This ensures that a client will get a callback to
-                    // "unlock" the UI state even if the raised hand list is the same as before.
-                    if state.raise_hand_state.outstanding {
-                        state.raise_hand_state.outstanding = false;
-                        state.raised_hands = raised_hands;
+                        // Issue a callback when the seqnum value of the local demux id in the
+                        // servers list is equal to or greater than the local seqnum and a raised
+                        // hand is outstanding. This ensures that a client will get a callback to
+                        // "unlock" the UI state even if the raised hand list is the same as before.
+                        if state.raise_hand_state.outstanding {
+                            state.raise_hand_state.outstanding = false;
+                            state.raised_hands = raised_hands;
 
-                        info!(
+                            info!(
                             "group_call::Client(inner)::handle_raised_hands(client_id: {} raised_hands: {:?} seqnum: {} raise: {} outstanding: {})",
                             state.client_id,
                             state.raised_hands,
@@ -4963,14 +5071,13 @@ impl Client {
                             state.raise_hand_state.outstanding
                         );
 
-                        state
-                            .observer
-                            .handle_raised_hands(state.client_id, state.raised_hands.clone());
-
-                    } else if state.raised_hands != raised_hands {
-                        // Issue a callback when a raised hand is not outstanding and the
-                        // raised hand list has changed.
-                        info!(
+                            state
+                                .observer
+                                .handle_raised_hands(state.client_id, state.raised_hands.clone());
+                        } else if state.raised_hands != raised_hands {
+                            // Issue a callback when a raised hand is not outstanding and the
+                            // raised hand list has changed.
+                            info!(
                             "group_call::Client(inner)::handle_raised_hands(client_id: {} raised_hands: {:?} server seqnum: {} local seqnum: {} local raise: {} outstanding: {})",
                             state.client_id,
                             raised_hands,
@@ -4979,23 +5086,23 @@ impl Client {
                             state.raise_hand_state.raise,
                             state.raise_hand_state.outstanding
                         );
+                            state.raised_hands = raised_hands;
+                            state
+                                .observer
+                                .handle_raised_hands(state.client_id, state.raised_hands.clone());
+                        }
+                    }
+                } else {
+                    // Issue a callback if the client has never raised their hand and the server
+                    // list is different than before.
+                    if state.raise_hand_state.seqnum == 0 && state.raised_hands != raised_hands {
                         state.raised_hands = raised_hands;
                         state
                             .observer
                             .handle_raised_hands(state.client_id, state.raised_hands.clone());
                     }
                 }
-            } else {
-                // Issue a callback if the client has never raised their hand and the server
-                // list is different than before.
-                if state.raise_hand_state.seqnum == 0 && state.raised_hands != raised_hands {
-                    state.raised_hands = raised_hands;
-                    state
-                        .observer
-                        .handle_raised_hands(state.client_id, state.raised_hands.clone());
-                }
-            }
-        });
+            });
     }
 
     #[cfg(feature = "sim")]
@@ -5080,46 +5187,46 @@ impl PeerConnectionObserverTrait for PeerConnectionObserverImpl {
         );
         if let Some(client) = &self.client {
             client.actor.send(move |state| {
-                debug!("group_call::Client(inner)::handle_ice_connection_state_changed(client_id: {}, state: {:?})", state.client_id, ice_connection_state);
+                    debug!("group_call::Client(inner)::handle_ice_connection_state_changed(client_id: {}, state: {:?})", state.client_id, ice_connection_state);
 
-                match (state.connection_state, ice_connection_state) {
-                    (ConnectionState::Connecting, IceConnectionState::Disconnected) |
-                    (ConnectionState::Connecting, IceConnectionState::Closed) |
-                    (ConnectionState::Connecting, IceConnectionState::Failed) => {
-                        // ICE failed before we got connected :(
-                        Client::end(state, CallEndReason::IceFailedWhileConnecting);
+                    match (state.connection_state, ice_connection_state) {
+                        (ConnectionState::Connecting, IceConnectionState::Disconnected) |
+                        (ConnectionState::Connecting, IceConnectionState::Closed) |
+                        (ConnectionState::Connecting, IceConnectionState::Failed) => {
+                            // ICE failed before we got connected :(
+                            Client::end(state, CallEndReason::IceFailedWhileConnecting);
+                        }
+                        (ConnectionState::Connecting, IceConnectionState::Checking) |
+                        (ConnectionState::Reconnecting, IceConnectionState::Checking) => {
+                            // Normal.  Not much to report.
+                        }
+                        (ConnectionState::Connecting, IceConnectionState::Connected) |
+                        (ConnectionState::Connecting, IceConnectionState::Completed) => {
+                            // ICE Connected!
+                            Client::set_connection_state_and_notify_observer(state, ConnectionState::Connected);
+                        }
+                        (ConnectionState::Connected, IceConnectionState::Checking) |
+                        (ConnectionState::Connected, IceConnectionState::Disconnected) => {
+                            // Some connectivity problems, hopefully temporary.
+                            Client::set_connection_state_and_notify_observer(state, ConnectionState::Reconnecting);
+                            info!("regathering candidates on all networks");
+                            state.peer_connection.regather_on_all_networks();
+                        }
+                        (ConnectionState::Reconnecting, IceConnectionState::Connected) |
+                        (ConnectionState::Reconnecting, IceConnectionState::Completed) => {
+                            // The connectivity problems have gone away it seems.
+                            Client::set_connection_state_and_notify_observer(state, ConnectionState::Connected);
+                        }
+                        (_, IceConnectionState::Failed) |
+                        (_, IceConnectionState::Closed) => {
+                            // The connectivity problems persisted.  ICE has failed.
+                            Client::end(state, CallEndReason::IceFailedAfterConnected);
+                        }
+                        (_, _) => {
+                            warn!("Could not process ICE connection state {:?} while in group call ConnectionState {:?}", ice_connection_state, state.connection_state);
+                        }
                     }
-                    (ConnectionState::Connecting, IceConnectionState::Checking) |
-                    (ConnectionState::Reconnecting, IceConnectionState::Checking) => {
-                        // Normal.  Not much to report.
-                    }
-                    (ConnectionState::Connecting, IceConnectionState::Connected) |
-                    (ConnectionState::Connecting, IceConnectionState::Completed) => {
-                        // ICE Connected!
-                        Client::set_connection_state_and_notify_observer(state, ConnectionState::Connected);
-                    }
-                    (ConnectionState::Connected, IceConnectionState::Checking) |
-                    (ConnectionState::Connected, IceConnectionState::Disconnected) => {
-                        // Some connectivity problems, hopefully temporary.
-                        Client::set_connection_state_and_notify_observer(state, ConnectionState::Reconnecting);
-                        info!("regathering candidates on all networks");
-                        state.peer_connection.regather_on_all_networks();
-                    }
-                    (ConnectionState::Reconnecting, IceConnectionState::Connected) |
-                    (ConnectionState::Reconnecting, IceConnectionState::Completed) => {
-                        // The connectivity problems have gone away it seems.
-                        Client::set_connection_state_and_notify_observer(state, ConnectionState::Connected);
-                    }
-                    (_, IceConnectionState::Failed) |
-                    (_, IceConnectionState::Closed) => {
-                        // The connectivity problems persisted.  ICE has failed.
-                        Client::end(state, CallEndReason::IceFailedAfterConnected);
-                    }
-                    (_, _) => {
-                        warn!("Could not process ICE connection state {:?} while in group call ConnectionState {:?}", ice_connection_state, state.connection_state);
-                    }
-                }
-            });
+                });
         } else {
             warn!("Call isn't setup yet!");
         }
@@ -5134,12 +5241,12 @@ impl PeerConnectionObserverTrait for PeerConnectionObserverImpl {
         );
         if let Some(client) = &self.client {
             client.actor.send(move |state| {
-                debug!("group_call::Client(inner)::handle_ice_network_route_changed(client_id: {}, network_route: {:?})", state.client_id, network_route);
-                state
-                    .observer
-                    .handle_network_route_changed(state.client_id, network_route);
-                state.call_summary.on_ice_network_route_changed(network_route);
-            });
+                    debug!("group_call::Client(inner)::handle_ice_network_route_changed(client_id: {}, network_route: {:?})", state.client_id, network_route);
+                    state
+                        .observer
+                        .handle_network_route_changed(state.client_id, network_route);
+                    state.call_summary.on_ice_network_route_changed(network_route);
+                });
         } else {
             warn!("Call isn't setup yet!");
         }
@@ -5209,8 +5316,8 @@ impl PeerConnectionObserverTrait for PeerConnectionObserverImpl {
                         // The height needs to be checked again because last_height_by_demux_id
                         // doesn't account for video mute or forwarding state.
                         if remote_device.client_decoded_height != Some(height)
-                        // Workaround for a race where a frame is received after video muting
-                        && remote_device.heartbeat_state.video_muted != Some(true)
+                                // Workaround for a race where a frame is received after video muting
+                                && remote_device.heartbeat_state.video_muted != Some(true)
                         {
                             remote_device.client_decoded_height = Some(height);
 
@@ -5543,6 +5650,7 @@ mod tests {
             _ice_ufrag: &str,
             _ice_pwd: &str,
             _dhe_pub_key: [u8; 32],
+            _requires_svc: bool,
             client: Client,
         ) {
             if let Some(counter) = &self.joins_remaining
@@ -6241,6 +6349,7 @@ mod tests {
                 dred_duration: 0,
                 audio_levels_interval: Some(Duration::from_millis(200)),
                 group_send_endorsement_cache,
+                svc_config: None,
             })
             .expect("Start Client");
             Self {
@@ -6254,6 +6363,7 @@ mod tests {
                     devices: vec![PeekDeviceInfo {
                         demux_id,
                         user_id: Some(user_id),
+                        requires_svc: false,
                     }],
                     ..Default::default()
                 },
@@ -6302,6 +6412,7 @@ mod tests {
                 .map(|client| PeekDeviceInfo {
                     demux_id: client.demux_id,
                     user_id: Some(client.user_id.clone()),
+                    requires_svc: false,
                 })
                 .collect();
             // Need to clone to pass over to the actor and set in observer.
@@ -6322,6 +6433,7 @@ mod tests {
                 .map(|client| PeekDeviceInfo {
                     demux_id: client.demux_id,
                     user_id: Some(client.user_id.clone()),
+                    requires_svc: false,
                 })
                 .collect();
             let peek_info = PeekInfo {
@@ -6851,7 +6963,7 @@ mod tests {
     }
 
     #[test]
-    #[rustfmt::skip] // The line wrapping makes this test hard to read.
+        #[rustfmt::skip] // The line wrapping makes this test hard to read.
     fn send_media_keys_to_recipients() {
         let client1 = TestClient::new(vec![1], 1);
         client1.connect_join_and_wait_until_joined();
@@ -7303,10 +7415,12 @@ mod tests {
                 PeekDeviceInfo {
                     demux_id: 2,
                     user_id: Some(b"2".to_vec()),
+                    requires_svc: false,
                 },
                 PeekDeviceInfo {
                     demux_id: 3,
                     user_id: None,
+                    requires_svc: false,
                 },
             ],
             pending_devices: vec![],
@@ -7343,6 +7457,7 @@ mod tests {
             devices: vec![PeekDeviceInfo {
                 demux_id: 1,
                 user_id: Some(b"1".to_vec()),
+                requires_svc: false,
             }],
             pending_devices: vec![],
             creator: None,
@@ -8280,6 +8395,7 @@ mod tests {
             devices: vec![PeekDeviceInfo {
                 demux_id: 2,
                 user_id: None,
+                requires_svc: false,
             }],
             max_devices: Some(2),
             pending_devices: vec![],
@@ -8649,6 +8765,7 @@ mod tests {
                 PeekDeviceInfo {
                     demux_id,
                     user_id: Some(user_id.as_bytes().to_vec()),
+                    requires_svc: false,
                 }
             })
             .collect();

@@ -35,6 +35,12 @@ pub struct RffiPeerConnection {
 impl webrtc::RefCounted for RffiPeerConnection {}
 
 unsafe extern "C" {
+    pub fn Rust_setScalabilityMode(
+        peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
+        scalability_mode: webrtc::ptr::Borrowed<c_char>,
+        max_bitrate_bps: i32,
+    ) -> bool;
+
     pub fn Rust_updateTransceivers(
         peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
         remote_demux_ids_data: webrtc::ptr::Borrowed<u32>,

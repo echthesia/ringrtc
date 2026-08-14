@@ -149,6 +149,16 @@ struct RffiPeerConnectionState {
 }
 
 #[allow(non_snake_case, clippy::missing_safety_doc)]
+pub unsafe fn Rust_setScalabilityMode(
+    _peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
+    _scalability_mode: webrtc::ptr::Borrowed<c_char>,
+    _max_bitrate_bps: i32,
+) -> bool {
+    info!("Rust_setScalabilityMode():");
+    true
+}
+
+#[allow(non_snake_case, clippy::missing_safety_doc)]
 pub unsafe fn Rust_updateTransceivers(
     _peer_connection: webrtc::ptr::BorrowedRc<RffiPeerConnection>,
     _remote_demux_ids_data: webrtc::ptr::Borrowed<u32>,

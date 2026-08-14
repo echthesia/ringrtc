@@ -131,4 +131,6 @@ pub enum RingRtcError {
     InvalidRemoteSrtpKey,
     #[error("Buffer too small")]
     BufferTooSmall,
+    #[error("Failed to enable SVC")]
+    EnableScalableVideoCoding,
 }

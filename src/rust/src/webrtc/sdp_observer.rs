@@ -375,8 +375,10 @@ impl SessionDescription {
         ice_ufrag: &str,
         ice_pwd: &str,
         client_srtp_key: &SrtpKey,
-        rtp_demux_id: Option<u32>,
+        rtp_demux_id: u32,
         rtp_demux_ids: &[u32],
+        rtp_demux_ids_require_svc: &[u32],
+        enable_svc: bool,
     ) -> Result<Self> {
         let rffi_ice_ufrag = CString::new(ice_ufrag.as_bytes())?;
         let rffi_ice_pwd = CString::new(ice_pwd.as_bytes())?;
@@ -386,9 +388,12 @@ impl SessionDescription {
                 webrtc::ptr::Borrowed::from_ptr(rffi_ice_ufrag.as_ptr()),
                 webrtc::ptr::Borrowed::from_ptr(rffi_ice_pwd.as_ptr()),
                 client_srtp_key.rffi(),
-                rtp_demux_id.unwrap_or(0),
+                rtp_demux_id,
                 webrtc::ptr::Borrowed::from_ptr(rtp_demux_ids.as_ptr()),
                 rtp_demux_ids.len(),
+                webrtc::ptr::Borrowed::from_ptr(rtp_demux_ids_require_svc.as_ptr()),
+                rtp_demux_ids_require_svc.len(),
+                enable_svc,
             )
         });
         if sdi.is_null() {
@@ -403,6 +408,8 @@ impl SessionDescription {
         server_srtp_key: &SrtpKey,
         rtp_demux_id: u32,
         rtp_demux_ids: &[u32],
+        rtp_demux_ids_require_svc: &[u32],
+        enable_svc: bool,
     ) -> Result<Self> {
         let rffi_ice_ufrag = CString::new(ice_ufrag.as_bytes())?;
         let rffi_ice_pwd = CString::new(ice_pwd.as_bytes())?;
@@ -415,6 +422,9 @@ impl SessionDescription {
                 rtp_demux_id,
                 webrtc::ptr::Borrowed::from_ptr(rtp_demux_ids.as_ptr()),
                 rtp_demux_ids.len(),
+                webrtc::ptr::Borrowed::from_ptr(rtp_demux_ids_require_svc.as_ptr()),
+                rtp_demux_ids_require_svc.len(),
+                enable_svc,
             )
         });
         if sdi.is_null() {

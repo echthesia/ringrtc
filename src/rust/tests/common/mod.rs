@@ -22,7 +22,12 @@ use rand::{
 };
 use ringrtc::{
     common::{ApplicationEvent, CallEndReason, CallMediaType, DeviceId},
-    core::{call::Call, call_manager::CallManager, connection::Connection, group_call, signaling},
+    core::{
+        call::Call,
+        call_manager::{CallManager, CreateGroupCallParams},
+        connection::Connection,
+        group_call, signaling,
+    },
     lite::http,
     protobuf,
     sim::sim_platform::SimPlatform,
@@ -264,17 +269,24 @@ impl TestContext {
         &self,
         group_id: group_call::GroupId,
     ) -> Result<group_call::ClientId, anyhow::Error> {
-        self.cm().create_group_call_client(
+        self.cm().create_group_call_client(CreateGroupCallParams {
             group_id,
-            "".to_owned(),
-            vec![],
-            None,
-            0,
-            None,
-            ringrtc::webrtc::media::AudioTrack::new(webrtc::Arc::null(), None),
-            ringrtc::webrtc::media::VideoTrack::new(webrtc::Arc::null(), None),
-            None,
-        )
+            sfu_url: "".to_owned(),
+            hkdf_extra_info: vec![],
+            audio_levels_interval: None,
+            dred_duration: 0,
+            svc_config: None,
+            peer_connection_factory: None,
+            outgoing_audio_track: ringrtc::webrtc::media::AudioTrack::new(
+                webrtc::Arc::null(),
+                None,
+            ),
+            outgoing_video_track: ringrtc::webrtc::media::VideoTrack::new(
+                webrtc::Arc::null(),
+                None,
+            ),
+            incoming_video_sink: None,
+        })
     }
 }
 

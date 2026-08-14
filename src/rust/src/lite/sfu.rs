@@ -129,6 +129,7 @@ impl PeekInfo {
 pub struct PeekDeviceInfo {
     pub demux_id: DemuxId,
     pub user_id: Option<UserId>,
+    pub requires_svc: bool,
 }
 
 /// Form of PeekInfo sent over HTTP.
@@ -156,6 +157,8 @@ struct SerializedPeekDeviceInfo {
     opaque_user_id: Option<OpaqueUserId>,
     #[serde(rename = "demuxId")]
     demux_id: u32,
+    #[serde(rename = "requiresSvc", default)]
+    requires_svc: bool,
 }
 
 impl SerializedPeekInfo<'_> {
@@ -201,6 +204,7 @@ impl SerializedPeekDeviceInfo {
             user_id: self
                 .opaque_user_id
                 .and_then(|user_id| member_resolver.resolve(&user_id)),
+            requires_svc: self.requires_svc,
         }
     }
 }
@@ -211,15 +215,17 @@ impl TryFrom<ProtoPeekDeviceInfo> for SerializedPeekDeviceInfo {
         ProtoPeekDeviceInfo {
             demux_id,
             opaque_user_id,
+            requires_svc,
         }: ProtoPeekDeviceInfo,
     ) -> Result<Self, Self::Error> {
-        if demux_id.is_none() {
+        let Some(demux_id) = demux_id else {
             return Err("Missing required fields in PeekDeviceInfo".to_string());
-        }
-
+        };
+        let requires_svc = requires_svc.unwrap_or(false);
         Ok(Self {
             opaque_user_id,
-            demux_id: demux_id.unwrap(),
+            demux_id,
+            requires_svc,
         })
     }
 }
@@ -652,24 +658,42 @@ struct JoinRequest<'a> {
 
     #[serde_as(as = "serde_with::hex::Hex")]
     hkdf_extra_info: &'a [u8],
+
+    requires_svc: bool,
 }
 
-#[allow(clippy::too_many_arguments)]
-pub fn join(
-    http_client: &dyn http::Client,
-    sfu_url: &str,
-    room_id_header: Option<String>,
-    call_link_root_key: Option<CallLinkRootKey>,
-    auth_header: String,
-    admin_passkey: Option<&[u8]>,
-    client_ice_ufrag: &str,
-    client_ice_pwd: &str,
-    client_dhe_pub_key: &[u8],
-    hkdf_extra_info: &[u8],
-    member_resolver: Arc<dyn MemberResolver + Send + Sync>,
-    result_callback: JoinResultCallback,
-) {
+pub struct JoinParams<'a> {
+    pub http_client: &'a dyn http::Client,
+    pub sfu_url: &'a str,
+    pub room_id_header: Option<String>,
+    pub call_link_root_key: Option<CallLinkRootKey>,
+    pub auth_header: String,
+    pub admin_passkey: Option<&'a [u8]>,
+    pub client_ice_ufrag: &'a str,
+    pub client_ice_pwd: &'a str,
+    pub client_dhe_pub_key: &'a [u8],
+    pub hkdf_extra_info: &'a [u8],
+    pub requires_svc: bool,
+    pub member_resolver: Arc<dyn MemberResolver + Send + Sync>,
+}
+
+pub fn join(params: JoinParams<'_>, result_callback: JoinResultCallback) {
     info!("sfu:Join(): ");
+
+    let JoinParams {
+        http_client,
+        sfu_url,
+        room_id_header,
+        call_link_root_key,
+        auth_header,
+        admin_passkey,
+        client_ice_ufrag,
+        client_ice_pwd,
+        client_dhe_pub_key,
+        hkdf_extra_info,
+        requires_svc,
+        member_resolver,
+    } = params;
 
     if call_link_root_key.is_some_and(|root_key| !root_key.is_valid()) {
         result_callback(Err(http::ResponseStatus::CALL_LINK_INVALID));
@@ -692,6 +716,7 @@ pub fn join(
                     ice_ufrag: client_ice_ufrag,
                     ice_pwd: client_ice_pwd,
                     dhe_public_key: client_dhe_pub_key,
+                    requires_svc,
                     hkdf_extra_info,
                 })
                 .expect("always valid"),
@@ -985,10 +1010,12 @@ mod tests {
                 SerializedPeekDeviceInfo {
                     opaque_user_id: Some("u1".to_string()),
                     demux_id: 0x11111110,
+                    requires_svc: false,
                 },
                 SerializedPeekDeviceInfo {
                     opaque_user_id: Some("u2".to_string()),
                     demux_id: 0x22222220,
+                    requires_svc: false,
                 },
             ],
             pending_clients: vec![],
@@ -1030,10 +1057,12 @@ mod tests {
                 SerializedPeekDeviceInfo {
                     opaque_user_id: Some("u1".to_string()),
                     demux_id: 0x11111110,
+                    requires_svc: false,
                 },
                 SerializedPeekDeviceInfo {
                     opaque_user_id: Some("u2".to_string()),
                     demux_id: 0x22222220,
+                    requires_svc: false,
                 },
             ],
             creator: None,
@@ -1087,20 +1116,24 @@ mod tests {
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u1".to_string()),
                     demux_id: Some(0x11111110),
+                    requires_svc: Some(false),
                 },
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u2".to_string()),
                     demux_id: Some(0x22222220),
+                    requires_svc: Some(false),
                 },
             ],
             pending_devices: vec![
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u3".to_string()),
                     demux_id: Some(0x33333330),
+                    requires_svc: Some(false),
                 },
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u4".to_string()),
                     demux_id: Some(0x44444440),
+                    requires_svc: Some(false),
                 },
             ],
             creator: Some("u1".to_string()),
@@ -1115,20 +1148,24 @@ mod tests {
                     PeekDeviceInfo {
                         demux_id: 0x11111110,
                         user_id: Some(vec![1u8; 4]),
+                        requires_svc: false,
                     },
                     PeekDeviceInfo {
                         demux_id: 0x22222220,
                         user_id: Some(vec![2u8; 4]),
+                        requires_svc: false,
                     },
                 ],
                 pending_devices: vec![
                     PeekDeviceInfo {
                         demux_id: 0x33333330,
                         user_id: Some(vec![3u8; 4]),
+                        requires_svc: false,
                     },
                     PeekDeviceInfo {
                         demux_id: 0x44444440,
                         user_id: Some(vec![4u8; 4]),
+                        requires_svc: false,
                     },
                 ],
                 creator: Some(vec![1u8; 4]),
@@ -1151,24 +1188,29 @@ mod tests {
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u1".to_string()),
                     demux_id: Some(0x11111110),
+                    requires_svc: Some(false),
                 },
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u2".to_string()),
                     demux_id: Some(0x22222220),
+                    requires_svc: Some(false),
                 },
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u5".to_string()),
                     demux_id: Some(0x55555550),
+                    requires_svc: Some(false),
                 },
             ],
             pending_devices: vec![
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u3".to_string()),
                     demux_id: Some(0x33333330),
+                    requires_svc: Some(false),
                 },
                 ProtoPeekDeviceInfo {
                     opaque_user_id: Some("u4".to_string()),
                     demux_id: Some(0x44444440),
+                    requires_svc: Some(false),
                 },
             ],
             creator: Some("u1".to_string()),
@@ -1183,24 +1225,29 @@ mod tests {
                     PeekDeviceInfo {
                         demux_id: 0x11111110,
                         user_id: Some(vec![1u8; 4]),
+                        requires_svc: false,
                     },
                     PeekDeviceInfo {
                         demux_id: 0x22222220,
                         user_id: Some(vec![2u8; 4]),
+                        requires_svc: false,
                     },
                     PeekDeviceInfo {
                         demux_id: 0x55555550,
                         user_id: Some(vec![5u8; 4]),
+                        requires_svc: false,
                     },
                 ],
                 pending_devices: vec![
                     PeekDeviceInfo {
                         demux_id: 0x33333330,
                         user_id: Some(vec![3u8; 4]),
+                        requires_svc: false,
                     },
                     PeekDeviceInfo {
                         demux_id: 0x44444440,
                         user_id: Some(vec![4u8; 4]),
+                        requires_svc: false,
                     },
                 ],
                 creator: Some(vec![1u8; 4]),
@@ -1242,10 +1289,12 @@ mod tests {
                     SerializedPeekDeviceInfo {
                         opaque_user_id: Some(encrypt(uuid_1, &secret_params)),
                         demux_id: 0x11111110,
+                        requires_svc: false,
                     },
                     SerializedPeekDeviceInfo {
                         opaque_user_id: Some(encrypt(uuid_2, &secret_params)),
                         demux_id: 0x22222220,
+                        requires_svc: false,
                     },
                 ],
                 pending_clients: vec![],
