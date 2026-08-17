@@ -248,6 +248,44 @@ jobs:
         key: android-sizes-${{ github.event.after }}
       if: ${{ github.event_name == 'push' }}
 
+    # For hardware acceleration for android emulator; see https://github.blog/changelog/2024-04-02-github-actions-hardware-accelerated-android-virtualization-now-available/
+    - name: Enable KVM group perms
+      run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+
+    # From reactivecircus/android-emulator-runner
+    - name: AVD cache
+      uses: actions/cache@v5
+      id: avd-cache
+      with:
+        path: |
+          ~/.android/avd/*
+          ~/.android/adb*
+        key: avd-x86_64-23-linux
+
+    - name: Create AVD and generate snapshot for caching
+      if: steps.avd-cache.outputs.cache-hit != 'true'
+      uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+      with:
+        arch: x86_64
+        api-level: 23
+        force-avd-creation: false
+        emulator-options: -no-window -noaudio -no-boot-anim
+        script: echo "Generated AVD snapshot for caching."
+
+    - name: Run tests
+      uses: reactivecircus/android-emulator-runner@e89f39f1abbbd05b1113a29cf4db69e7540cae5a # v2.37.0
+      with:
+        arch: x86_64
+        api-level: 23
+        force-avd-creation: false
+        emulator-options: -no-snapshot-save -no-window -noaudio -no-boot-anim
+        # It is correct that we use *debug*RingrtcLibDir below (specified by connectedCheck),
+        # even though we are using *release* artifacts.
+        script: ./gradlew ringrtc:android:connectedCheck -PdebugRingrtcLibDir=${{ github.workspace }}/out/release/libs -PwebrtcJar=${{ github.workspace }}/out/release/libs/libwebrtc.jar
+
   ios:
     name: iOS Tests
     runs-on: macos-latest-xlarge
