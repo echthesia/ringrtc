@@ -36,7 +36,7 @@ jobs:
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal --component clippy --target aarch64-linux-android,aarch64-apple-ios
     - name: Install extra Rust tools
       run: cargo +stable install --version 0.8.4 --locked cargo-about
-    - run: shellcheck **/*.sh bin/build-aar bin/build-direct bin/build-desktop bin/build-gctc bin/build-ios bin/build-javadoc bin/build-rustdoc bin/fetch-artifact bin/gsync-webrtc bin/prepare-workspace bin/rust-lint-check bin/set-up-for-cocoapods src/rust/scripts/run-tests
+    - run: shellcheck **/*.sh bin/build-aar bin/build-desktop bin/build-ios bin/build-javadoc bin/build-rustdoc bin/fetch-artifact bin/gsync-webrtc bin/prepare-workspace bin/rust-lint-check bin/set-up-for-cocoapods src/rust/scripts/run-tests
     # Skip the Python scripts not written with flake8 style. (Try not to add more.)
     # We ignore 503; it's contradictory with 504!
     # https://www.flake8rules.com/rules/W503.html, https://www.flake8rules.com/rules/W504.html
@@ -139,10 +139,9 @@ jobs:
       uses: ./.github/actions/install-protoc
       if: ${{ runner.os == 'Windows' }}
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal
-    - run: bin/fetch-artifact -p desktop
-    - run: bin/build-desktop --release --ringrtc-only --test-ringrtc-adm
+    - run: USE_PREBUILD=1 TYPE=release TEST_RINGRTC_ADM=yes make electron
       if: ${{ runner.os != 'Windows' }}
-    - run: bin/build-desktop --release --ringrtc-only --test-ringrtc-adm-utils
+    - run: USE_PREBUILD=1 TYPE=release TEST_RINGRTC_ADM_UTILS=yes make electron
       if: ${{ runner.os == 'Windows' }}
 
     - name: Get cached base sizes
@@ -224,8 +223,7 @@ jobs:
       with:
         distribution: temurin
         java-version: 21
-    - run: bin/fetch-artifact -p android
-    - run: bin/build-aar --release --ringrtc-only
+    - run: USE_PREBUILD=1 TYPE=release make android
 
     - name: Get cached base sizes
       id: cache-base
@@ -259,8 +257,7 @@ jobs:
     - run: rustup toolchain install $(cat rust-toolchain) --profile minimal --target aarch64-apple-ios-sim
     - run: cargo install cbindgen
     - run: sudo xcodes select $(cat src/ios/SignalRingRTC/.xcode-version)
-    - run: bin/fetch-artifact -p ios
-    - run: bin/build-ios --release --ringrtc-only --host-sim-only
+    - run: USE_PREBUILD=1 TYPE=release HOST_SIM_ONLY=yes make ios
     - run: pod install
       working-directory: src/ios/SignalRingRTC
     # Pick a phone model here that's likely to work on recent Xcodes.
@@ -268,6 +265,21 @@ jobs:
       working-directory: src/ios/SignalRingRTC
       env:
         TEST_RUNNER_RINGRTC_MAX_LOG_LEVEL: 2 # warnings only
+
+  test_binaries:
+    name: Build test binaries
+    runs-on: ubuntu-latest-4-cores
+    steps:
+    - name: Install dependencies
+      run: sudo apt-get update && sudo apt-get install -y protobuf-compiler libpulse-dev libpulse0
+    - uses: actions/checkout@v6
+    - run: rustup toolchain install $(cat rust-toolchain) --profile minimal
+    - name: Build direct
+      run: USE_PREBUILD=1 TYPE=release make direct
+    - name: Build gctc
+      run: USE_PREBUILD=1 TYPE=release make gctc
+    - name: Build call_sim-cli
+      run: USE_PREBUILD=1 TYPE=release make call_sim-cli
 
   ringrtc_size:
     name: RingRTC Size comparison

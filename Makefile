@@ -44,7 +44,7 @@ help:
 	$(Q) echo "For example:"
 	$(Q) echo "  $ make ios PREPARE_WORKSPACE=1"
 	$(Q) echo
-	$(Q) echo "For the electron/cli/gctc builds, you may also specify a different"
+	$(Q) echo "For the electron/direct/gctc builds, you may also specify a different"
 	$(Q) echo "platform for which to download WebRTC. For example:"
 	$(Q) echo "  $ make electron PLATFORM=unix PREPARE_WORKSPACE=1"
 	$(Q) echo
@@ -59,14 +59,14 @@ ifeq ($(PREPARE_WORKSPACE), 1)
 android: prepare_workspace
 ios: prepare_workspace
 electron: prepare_workspace
-cli: prepare_workspace
+direct: prepare_workspace
 gctc: prepare_workspace
 call_sim-cli: prepare_workspace
 else ifeq ($(USE_PREBUILD), 1)
 android: fetch_artifact
 ios: fetch_artifact
 electron: fetch_artifact
-cli: fetch_artifact
+direct: fetch_artifact
 gctc: fetch_artifact
 call_sim-cli: fetch_artifact
 endif
@@ -95,41 +95,41 @@ electron: PLATFORM ?= desktop
 electron:
 	$(Q) if [ "$(TYPE)" = "debug" ] ; then \
 		echo "Electron: Debug build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -d --no-call-sim-cli ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -d ; \
 	else \
 		echo "Electron: Release build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -r --no-call-sim-cli ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -r ; \
 	fi
 	$(Q) (cd src/node && npm install && npm run build)
 
-cli: PLATFORM ?= desktop
-cli:
+direct: PLATFORM ?= desktop
+direct:
 	$(Q) if [ "$(TYPE)" = "release" ] ; then \
-		echo "cli: Release build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-direct -r ; \
+		echo "direct: Release build" ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -r --direct ; \
 	else \
-		echo "cli: Debug build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-direct -d ; \
+		echo "direct: Debug build" ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -d --direct ; \
 	fi
 
 gctc: PLATFORM ?= desktop
 gctc:
 	$(Q) if [ "$(TYPE)" = "release" ] ; then \
 		echo "gctc: Release build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-gctc -r ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -r --gctc ; \
 	else \
 		echo "gctc: Debug build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-gctc -d ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -d --gctc ; \
 	fi
 
 call_sim-cli: PLATFORM ?= desktop
 call_sim-cli:
 	$(Q) if [ "$(TYPE)" = "debug" ] ; then \
 		echo "call_sim-cli: Debug build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop --no-electron -d ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -d --call_sim-cli ; \
 	else \
 		echo "call_sim-cli: Release build" ; \
-		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop --no-electron -r ; \
+		BUILD_WHAT=$(BUILD_WHAT) ./bin/build-desktop -r --call_sim-cli ; \
 	fi
 
 PHONY += clean

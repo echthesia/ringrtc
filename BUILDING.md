@@ -230,9 +230,9 @@ When the build is complete, the library will be available here:
 
 ### CLI test tool
 
-To build the CLI test tool for the host platform, run:
+To build the "direct" CLI test tool for the host platform, run:
 
-    make cli
+    make direct
 
 When the build is complete, the binary will be available at target/<debug|release>/direct.
 The test tool establishes a call over simulated signaling and media channels. You
