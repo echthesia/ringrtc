@@ -137,8 +137,6 @@ clean:
 	$(Q) ./bin/build-aar --clean
 	$(Q) ./bin/build-ios --clean
 	$(Q) ./bin/build-desktop --clean
-	$(Q) ./bin/build-direct --clean
-	$(Q) ./bin/build-gctc --clean
 	$(Q) rm -rf ./src/webrtc/src/out
 
 PHONY += distclean
