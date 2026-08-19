@@ -1,5 +1,27 @@
 # Changelog
 
+## v2.71.0
+
+- Add SVC Support for group calls
+
+- Start callee audio recording before playout
+
+- Use server provided Vec<SocketAddr> from Join
+
+- Improve redaction utilities
+
+- Make device_id required for ADM operations
+
+- Improve build scripts and CI
+
+- Update dependencies
+  - Update rust dependencies
+  - Update to Rust 1.97.1
+  - Update cubeb to 0.37
+  - Update npm tar package
+
+- Remove lazy_static usage
+
 ## v2.70.2
 
 - Trim string before checking LiteralPrefix redaction
