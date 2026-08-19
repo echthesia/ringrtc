@@ -101,6 +101,18 @@ pub struct AppOptionalUInt16 {
     pub valid: bool,
 }
 
+/// Structure for passing call configuration from Swift to Rust.
+#[repr(C)]
+#[derive(Debug)]
+#[allow(non_snake_case)]
+pub struct AppCallConfig {
+    pub dataMode: i32,
+    pub dredDuration: u8,
+    pub enableVp9Encode: bool,
+    pub enableVp9Decode: bool,
+    pub statsIntervalSecs: AppOptionalUInt16,
+}
+
 /// Structure for passing optional u32 values to/from Swift.
 #[repr(C)]
 #[derive(Debug)]
@@ -714,26 +726,27 @@ pub extern "C" fn ringrtcProceed(
     callManager: *mut c_void,
     callId: u64,
     appCallContext: AppCallContext,
-    dataMode: i32,
+    callConfig: AppCallConfig,
     audioLevelsIntervalMillis: u64,
-    enable_vp9_encode: bool,
-    enable_vp9_decode: bool,
-    dred_duration: u8,
 ) -> *mut c_void {
     let audio_levels_interval = if audioLevelsIntervalMillis == 0 {
         None
     } else {
         Some(Duration::from_millis(audioLevelsIntervalMillis))
     };
+    let mut config = CallConfig::default()
+        .with_data_mode(DataMode::from_i32(callConfig.dataMode))
+        .with_enable_vp9_encode(callConfig.enableVp9Encode)
+        .with_enable_vp9_decode(callConfig.enableVp9Decode)
+        .with_dred_duration(callConfig.dredDuration);
+    if callConfig.statsIntervalSecs.valid {
+        config = config.with_stats_interval_secs(callConfig.statsIntervalSecs.value);
+    }
     match call_manager::proceed(
         callManager as *mut IosCallManager,
         callId,
         appCallContext,
-        CallConfig::default()
-            .with_data_mode(DataMode::from_i32(dataMode))
-            .with_enable_vp9_encode(enable_vp9_encode)
-            .with_enable_vp9_decode(enable_vp9_decode)
-            .with_dred_duration(dred_duration),
+        config,
         audio_levels_interval,
     ) {
         Ok(_v) => {

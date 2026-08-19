@@ -637,9 +637,14 @@ export class RingRTCType {
         callId,
         settings.iceServers,
         settings.hideIp,
-        settings.dataMode,
-        settings.audioLevelsIntervalMillis || 0,
-        settings.dredDuration ?? 0
+        {
+          dataMode: settings.dataMode,
+          dredDuration: settings.dredDuration ?? 0,
+          enableVp9Encode: settings.enableVp9Encode ?? true,
+          enableVp9Decode: settings.enableVp9Decode ?? true,
+          statsIntervalSecs: settings.statsIntervalSecs,
+        },
+        settings.audioLevelsIntervalMillis || 0
       );
     });
   }
@@ -1972,12 +1977,24 @@ export class RingRTCType {
   }
 }
 
+type CallConfig = {
+  dataMode: DataMode;
+  dredDuration: number;
+  enableVp9Encode: boolean;
+  enableVp9Decode: boolean;
+  statsIntervalSecs?: number;
+};
+
 export type CallSettings = {
   iceServers: Array<IceServer>;
   hideIp: boolean;
   dataMode: DataMode;
   audioLevelsIntervalMillis?: number;
   dredDuration?: number;
+  enableVp9Encode?: boolean;
+  enableVp9Decode?: boolean;
+  // If present, sets the stats log interval
+  statsIntervalSecs?: number;
 };
 
 type IceServer = {
@@ -2984,9 +3001,8 @@ export type CallManager = {
     callId: CallId,
     iceServers: Array<IceServer>,
     hideIp: boolean,
-    dataMode: DataMode,
-    audioLevelsIntervalMillis: number,
-    dredDuration: number
+    callConfig: CallConfig,
+    audioLevelsIntervalMillis: number
   ): void;
   accept(callId: CallId): void;
   ignore(callId: CallId): void;

@@ -455,6 +455,7 @@ public class CallManager {
    * @param audioLevelsIntervalMs  if greater than 0, enable audio levels with this interval (in milliseconds)
    * @param dredDuration           if provided, client will encode DRED PLC for the period specified
    * @param enableCamera           if true, enable the local camera video track when created
+   * @param statsIntervalSecs      if provided, changes the stats log interval
    *
    * @throws CallException for native code failures
    *
@@ -472,7 +473,8 @@ public class CallManager {
                                 DataMode                       dataMode,
                       @Nullable Integer                        audioLevelsIntervalMs,
                       @Nullable Byte                           dredDuration,
-                                boolean                        enableCamera)
+                                boolean                        enableCamera,
+                      @Nullable Integer                        statsIntervalSecs)
     throws CallException
   {
     checkCallManagerExists();
@@ -502,14 +504,12 @@ public class CallManager {
     byte dredDurationByte = dredDuration == null ? 0 : dredDuration.byteValue();
     boolean enableVp9Encode = finalVideoConfig.enableHardwareVp9Encode || finalVideoConfig.enableSoftwareVp9Encode;
     boolean enableVp9Decode = finalVideoConfig.enableHardwareVp9Decode || finalVideoConfig.enableSoftwareVp9Decode;
+    CallConfig callConfig = new CallConfig(dataMode.ordinal(), dredDurationByte, enableVp9Encode, enableVp9Decode, statsIntervalSecs);
     ringrtcProceed(nativeCallManager,
                    callId.longValue(),
                    callContext,
-                   dataMode.ordinal(),
-                   audioLevelsIntervalMillis,
-                   dredDurationByte,
-                   enableVp9Encode,
-                   enableVp9Decode);
+                   callConfig,
+                   audioLevelsIntervalMillis);
   }
 
   /**
@@ -2611,11 +2611,8 @@ public class CallManager {
     void ringrtcProceed(long        nativeCallManager,
                         long        callId,
                         CallContext callContext,
-                        int         dataMode,
-                        int         audioLevelsIntervalMillis,
-                        byte        dredDuration,
-                        boolean     enableVp9Encode,
-                        boolean     enableVp9Decode)
+                        CallConfig  callConfig,
+                        int         audioLevelsIntervalMillis)
     throws CallException;
 
   private native

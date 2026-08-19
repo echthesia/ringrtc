@@ -896,6 +896,17 @@ impl CallConfig {
         self.audio_encoder_config.dred_duration = dred_duration;
         self
     }
+
+    pub fn with_stats_interval_secs(mut self, stats_interval_secs: u16) -> Self {
+        self.stats_interval_secs = stats_interval_secs;
+        // if stats_interval_secs <= stats_initial_offset_secs, then stats break
+        // guarantee that is not the case
+        self.stats_initial_offset_secs = core::cmp::min(
+            self.stats_initial_offset_secs,
+            stats_interval_secs.saturating_sub(1),
+        );
+        self
+    }
 }
 
 // Benchmarking component list.

@@ -930,9 +930,24 @@ fn proceed(mut cx: FunctionContext) -> JsResult<JsValue> {
     let call_id = CallId::new(get_id_arg(&mut cx, 0));
     let js_ice_servers = cx.argument::<JsArray>(1)?;
     let hide_ip = cx.argument::<JsBoolean>(2)?.value(&mut cx);
-    let data_mode = cx.argument::<JsNumber>(3)?.value(&mut cx) as i32;
+    let js_call_config = cx.argument::<JsObject>(3)?;
     let audio_levels_interval_millis = cx.argument::<JsNumber>(4)?.value(&mut cx) as u64;
-    let dred_duration = cx.argument::<JsNumber>(5)?.value(&mut cx) as u8;
+
+    let data_mode = js_call_config
+        .get::<JsNumber, _, _>(&mut cx, "dataMode")?
+        .value(&mut cx) as i32;
+    let dred_duration = js_call_config
+        .get::<JsNumber, _, _>(&mut cx, "dredDuration")?
+        .value(&mut cx) as u8;
+    let enable_vp9_encode = js_call_config
+        .get::<JsBoolean, _, _>(&mut cx, "enableVp9Encode")?
+        .value(&mut cx);
+    let enable_vp9_decode = js_call_config
+        .get::<JsBoolean, _, _>(&mut cx, "enableVp9Decode")?
+        .value(&mut cx);
+    let stats_interval_secs = js_call_config
+        .get_opt::<JsNumber, _, _>(&mut cx, "statsIntervalSecs")?
+        .map(|n| n.value(&mut cx) as u16);
 
     info!("proceed(): callId: {}, hideIp: {}", call_id, hide_ip);
     let mut ice_servers = Vec::new();
@@ -987,11 +1002,14 @@ fn proceed(mut cx: FunctionContext) -> JsResult<JsValue> {
             MAX_VIDEO_HEIGHT,
             MAX_VIDEO_FPS,
         );
-        let call_config = CallConfig::default()
+        let mut call_config = CallConfig::default()
             .with_data_mode(DataMode::from_i32(data_mode))
             .with_dred_duration(dred_duration)
-            .with_enable_vp9_encode(true)
-            .with_enable_vp9_decode(true);
+            .with_enable_vp9_encode(enable_vp9_encode)
+            .with_enable_vp9_decode(enable_vp9_decode);
+        if let Some(secs) = stats_interval_secs {
+            call_config = call_config.with_stats_interval_secs(secs);
+        }
         endpoint
             .call_manager
             .proceed(call_id, call_context, call_config, audio_levels_interval)?;
