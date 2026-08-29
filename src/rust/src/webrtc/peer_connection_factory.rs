@@ -133,23 +133,34 @@ pub struct RffiAudioConfig {
     pub aec_enabled: bool,
     pub ns_enabled: bool,
     pub agc_enabled: bool,
-    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    // Desktop's Rust ADM, and the same three fields on the watch, which has
+    // no Rust ADM: rffi creates the platform's own there (an AVAudioEngine
+    // AudioDeviceModule, behind RINGRTC_WATCHOS in peer_connection_factory.cc)
+    // and ignores these, which are null so that the C struct keeps its
+    // desktop layout. One declaration for both, not one per cfg: cbindgen
+    // has no [defines] mapping for either cfg, drops the guards, and would
+    // emit the fields twice.
+    #[cfg(any(
+        all(not(feature = "sim"), feature = "native"),
+        all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))
+    ))]
     pub adm_borrowed: webrtc::ptr::Borrowed<c_void>,
-    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    #[cfg(any(
+        all(not(feature = "sim"), feature = "native"),
+        all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))
+    ))]
     pub rust_audio_device_callbacks: webrtc::ptr::Borrowed<c_void>,
-    #[cfg(all(not(feature = "sim"), feature = "native"))]
+    #[cfg(any(
+        all(not(feature = "sim"), feature = "native"),
+        all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))
+    ))]
     pub free_adm_cb: unsafe extern "C" fn(webrtc::ptr::Borrowed<c_void>),
-    // The watch has no Rust ADM: rffi creates the platform's own (an
-    // AVAudioEngine AudioDeviceModule, behind RINGRTC_WATCHOS in
-    // peer_connection_factory.cc) and ignores these, which are null so that
-    // the C struct keeps its desktop layout.
-    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-    pub adm_borrowed: webrtc::ptr::Borrowed<c_void>,
-    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-    pub rust_audio_device_callbacks: webrtc::ptr::Borrowed<c_void>,
-    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-    pub free_adm_cb: Option<unsafe extern "C" fn(webrtc::ptr::Borrowed<c_void>)>,
 }
+
+/// The watch's `free_adm_cb`: there is no Rust ADM to release, and rffi
+/// never calls this for a null `adm_borrowed` anyway.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+unsafe extern "C" fn free_no_adm(_adm: webrtc::ptr::Borrowed<c_void>) {}
 pub struct RffiAudioConfigWrapper {
     rffi: RffiAudioConfig,
     #[cfg(all(not(feature = "sim"), feature = "native"))]
@@ -240,7 +251,7 @@ impl AudioConfig {
                 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
                 rust_audio_device_callbacks: webrtc::ptr::Borrowed::null(),
                 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-                free_adm_cb: None,
+                free_adm_cb: free_no_adm,
             },
             #[cfg(all(not(feature = "sim"), feature = "native"))]
             adm: adm_arc,
