@@ -4,6 +4,34 @@
 //
 
 import SignalRingRTC.RingRTC
+
+/// RingRTC's own field trials, set unless the app overrides them.
+let ringRtcDefaultFieldTrials: [String: String] = [
+    "RingRTC-AnyAddressPortsKillSwitch": "Enabled",
+    "RingRTC-PruneTurnPorts": "Enabled",
+    "WebRTC-Bwe-ProbingConfiguration": "skip_if_est_larger_than_fraction_of_max:0.99",
+    "WebRTC-IncreaseIceCandidatePriorityHostSrflx": "Enabled",
+]
+
+#if os(watchOS)
+
+// The watch has no ObjC WebRTC SDK: no RTCCallbackLogger to route WebRTC's
+// logs through (Rust installs WebRTC's log sink itself there, next to the
+// factory in IosPlatform::new) and no RTCInitFieldTrialDictionary -- the
+// trials go to Rust with the factory, through
+// ringrtcCreateCallManagerWithFieldTrials, in WebRTC's own
+// "Trial/Group/Trial/Group/" form.
+@available(iOSApplicationExtension, unavailable)
+public enum CallManagerGlobal {
+    static func fieldTrialsString(_ fieldTrials: [String: String]) -> String {
+        let fieldTrialsWithDefaults = fieldTrials.merging(ringRtcDefaultFieldTrials) { (provided, _) in provided }
+        Logger.info("Initialized field trials with \(fieldTrialsWithDefaults)")
+        return fieldTrialsWithDefaults.map { "\($0.key)/\($0.value)/" }.joined()
+    }
+}
+
+#else
+
 import WebRTC
 
 // Global singleton to guarantee certain things are only invoked
@@ -87,12 +115,7 @@ public class CallManagerGlobal {
         }
         hasInitializedFieldTrials = true
 
-        let fieldTrialsWithDefaults = fieldTrials.merging([
-            "RingRTC-AnyAddressPortsKillSwitch": "Enabled",
-            "RingRTC-PruneTurnPorts": "Enabled",
-            "WebRTC-Bwe-ProbingConfiguration": "skip_if_est_larger_than_fraction_of_max:0.99",
-            "WebRTC-IncreaseIceCandidatePriorityHostSrflx": "Enabled",
-        ]) { (provided, _) in provided }
+        let fieldTrialsWithDefaults = fieldTrials.merging(ringRtcDefaultFieldTrials) { (provided, _) in provided }
         RTCInitFieldTrialDictionary(fieldTrialsWithDefaults)
         Logger.info("Initialized field trials with \(fieldTrialsWithDefaults)")
     }
@@ -103,3 +126,5 @@ public class CallManagerGlobal {
         Logger.debug("object! CallManagerGlobal destroyed. \(ObjectIdentifier(self))")
     }
 }
+
+#endif

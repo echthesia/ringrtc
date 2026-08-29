@@ -4,6 +4,56 @@
 //
 
 import SignalRingRTC.RingRTC
+
+#if os(watchOS)
+
+/// One ICE server as `GET /v2/calling/relays` describes it, for the watch's
+/// `proceed`: Rust builds the PeerConnection there, so this is the plain data
+/// the ObjC SDK's `RTCIceServer` carries on iOS. `hostname` is the TLS host
+/// for a `urlsWithIps` entry and empty otherwise.
+public struct IceServer: Equatable, Sendable {
+    public let urls: [String]
+    public let username: String
+    public let password: String
+    public let hostname: String
+
+    public init(urls: [String], username: String, password: String, hostname: String = "") {
+        self.urls = urls
+        self.username = username
+        self.password = password
+        self.hostname = hostname
+    }
+}
+
+// The watch's call context: the ObjC SDK's sources and tracks live in Rust
+// there, and the ICE servers went to Rust with `proceed`, so this is what is
+// left for the app to hold per call.
+@available(iOSApplicationExtension, unavailable)
+public class CallContext {
+
+    let iceServers: [IceServer]
+    let hideIp: Bool
+
+    init(iceServers: [IceServer], hideIp: Bool) {
+        self.iceServers = iceServers
+        self.hideIp = hideIp
+
+        Logger.debug("object! CallContext created... \(ObjectIdentifier(self))")
+    }
+
+    deinit {
+        Logger.debug("object! CallContext destroyed... \(ObjectIdentifier(self))")
+    }
+
+    func getWrapper() -> AppCallContext {
+        return AppCallContext(
+            object: UnsafeMutableRawPointer(Unmanaged.passRetained(self).toOpaque()),
+            destroy: callContextDestroy)
+    }
+}
+
+#else
+
 import WebRTC
 
 // This class's member functions are all called from the CallManager class
@@ -84,6 +134,8 @@ public class CallContext {
         }
     }
 }
+
+#endif
 
 @available(iOSApplicationExtension, unavailable)
 func callContextDestroy(object: UnsafeMutableRawPointer?) {

@@ -4,7 +4,9 @@
 //
 
 import SignalRingRTC.RingRTC
+#if !os(watchOS)
 import WebRTC
+#endif
 
 // Errors that the Call Manager APIs can throw.
 @available(iOSApplicationExtension, unavailable)
@@ -320,6 +322,7 @@ public protocol CallManagerDelegate: AnyObject {
     @MainActor
     func callManager(_ callManager: CallManager<CallManagerDelegateCallType, Self>, shouldSendCallMessageToAdhocGroup message: Data, urgency: CallMessageUrgency, expiration: Date, recipientsToEndorsements: [UUID: Data])
 
+#if !os(watchOS)
     /**
      * The local video track has been enabled and can be connected to the
      * UI's display surface/view for the outgoing media.
@@ -333,6 +336,7 @@ public protocol CallManagerDelegate: AnyObject {
      */
     @MainActor
     func callManager(_ callManager: CallManager<CallManagerDelegateCallType, Self>, onAddRemoteVideoTrack call: CallManagerDelegateCallType, track: RTCVideoTrack)
+#endif
 
     /**
      * Optional: Indication that the call object retained by RingRTC is being released. This is optional and
@@ -371,7 +375,9 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
     public var httpClient: HTTPClient
     public var sfuClient: SFUClient
 
+#if !os(watchOS)
     private var factory: RTCPeerConnectionFactory?
+#endif
 
     // This dictionary is shared with each groupCall object, but the
     // permanent reference to it is here.
@@ -383,6 +389,32 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
 
     private var isAudioEnabled: Bool = true
 
+#if os(watchOS)
+    /// The watch's init: there is no ObjC WebRTC SDK, so RingRTC's Rust side
+    /// owns the PeerConnectionFactory and the outgoing audio track, and the
+    /// field trials iOS hands to the SDK go to Rust with the factory instead.
+    public init(httpClient: HTTPClient, fieldTrials: [String: String] = [:]) {
+        self.httpClient = httpClient
+        self.sfuClient = SFUClient(httpClient: httpClient)
+        self.groupCallByClientId = GroupCallByClientId()
+
+        // Create an anonymous Call Manager interface. Ownership will
+        // be transferred to RingRTC.
+        let interface = CallManagerInterface(delegate: self)
+
+        let fieldTrialsSlice = allocatedAppByteSliceFromString(maybe_string: CallManagerGlobal.fieldTrialsString(fieldTrials))
+        defer { fieldTrialsSlice.bytes?.deallocate() }
+
+        // Create the RingRTC Call Manager itself.
+        guard let ringRtcCallManager = ringrtcCreateCallManagerWithFieldTrials(interface.getWrapper(), self.httpClient.rtcClient, fieldTrialsSlice) else {
+            fail("unable to create ringRtcCallManager")
+        }
+
+        self.ringRtcCallManager = ringRtcCallManager
+
+        Logger.debug("object! CallManager created... \(ObjectIdentifier(self))")
+    }
+#else
     private var videoCaptureController: VideoCaptureController?
 
     public init(httpClient: HTTPClient, fieldTrials: [String: String] = [:], audioDevice: RTCAudioDevice? = nil) {
@@ -416,6 +448,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
 
         Logger.debug("object! CallManager created... \(ObjectIdentifier(self))")
     }
+#endif
 
     @MainActor
     public func setSelfUuid(_ uuid: UUID) {
@@ -538,6 +571,65 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
 
     // MARK: - Flow API
 
+#if os(watchOS)
+    /// Proceed with a call after the shouldStartCall delegate was invoked.
+    ///
+    /// The watch's `proceed`: audio only, and the ICE servers go to Rust,
+    /// which builds the PeerConnection (there is no ObjC SDK to build one
+    /// here). Everything from here on is the iOS flow.
+    ///
+    /// - Parameters:
+    ///   - callId: The callId as provided by the shouldStartCall delegate
+    ///   - iceServers: The ICE servers for WebRTC, from `GET /v2/calling/relays`
+    ///   - hideIp: A flag used to hide the IP of the user by using relay (TURN) servers only
+    ///   - dataMode: The desired data mode to start the session with
+    ///   - audioLevelsIntervalMillis: If non-zero, the desired interval between audio level events (in milliseconds)
+    ///   - dredDuration: The DRED redundancy level for the audio encoder (0 = disabled)
+    @MainActor
+    public func proceed(callId: UInt64, iceServers: [IceServer], hideIp: Bool, dataMode: DataMode, audioLevelsIntervalMillis: UInt64?, dredDuration: UInt8 = 0) throws {
+        Logger.info("proceed(): callId: 0x\(String(callId, radix: 16)), hideIp: \(hideIp)")
+        for iceServer in iceServers {
+            for url in iceServer.urls {
+                Logger.info("  server: \(url)");
+            }
+        }
+
+        let appCallContext = CallContext(iceServers: iceServers, hideIp: hideIp)
+
+        // Marshal the servers. Rust copies them before it returns, so
+        // everything allocated here is freed on the way out.
+        var slices: [AppByteSlice] = []
+        defer { for slice in slices { slice.bytes?.deallocate() } }
+        var urlArrays: [UnsafeMutablePointer<AppByteSlice>] = []
+        defer { for array in urlArrays { array.deallocate() } }
+        var appServers: [AppIceServer] = []
+        for server in iceServers {
+            let username = allocatedAppByteSliceFromString(maybe_string: server.username)
+            let password = allocatedAppByteSliceFromString(maybe_string: server.password)
+            let hostname = allocatedAppByteSliceFromString(maybe_string: server.hostname)
+            slices += [username, password, hostname]
+            let urls = UnsafeMutablePointer<AppByteSlice>.allocate(capacity: max(server.urls.count, 1))
+            urlArrays.append(urls)
+            for (index, url) in server.urls.enumerated() {
+                let slice = allocatedAppByteSliceFromString(maybe_string: url)
+                slices.append(slice)
+                urls[index] = slice
+            }
+            appServers.append(AppIceServer(
+                username: username,
+                password: password,
+                hostname: hostname,
+                urls: AppByteSliceArray(slices: UnsafePointer(urls), count: server.urls.count)))
+        }
+
+        let retPtr = appServers.withUnsafeBufferPointer { servers in
+            ringrtcProceedWithIceServers(ringRtcCallManager, callId, appCallContext.getWrapper(), AppIceServerArray(servers: servers.baseAddress, count: servers.count), hideIp, dataMode.rawValue, audioLevelsIntervalMillis ?? 0, dredDuration)
+        }
+        if retPtr == nil {
+            throw CallManagerError.apiFailed(description: "proceed() function failure")
+        }
+    }
+#else
     /// Proceed with a call after the shouldStartCall delegate was invoked.
     ///
     /// - Parameters:
@@ -590,6 +682,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
             throw CallManagerError.apiFailed(description: "proceed() function failure")
         }
     }
+#endif
 
     @MainActor
     public func drop(callId: UInt64) {
@@ -643,9 +736,15 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
             return
         }
 
+#if !os(watchOS)
         let appCallContext: CallContext = Unmanaged.fromOpaque(callContext).takeUnretainedValue()
 
         appCallContext.setAudioEnabled(enabled: enabled)
+#else
+        // The outgoing track is Rust's on the watch; ringrtcSetAudioEnable
+        // toggles it there before it touches the sender status.
+        _ = callContext
+#endif
 
         // This will fail silently when called before the call has connected,
         // and we'll try again when the connectedRemote event fires.
@@ -654,6 +753,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
         isAudioEnabled = enabled
     }
 
+#if !os(watchOS)
     @MainActor
     public func setLocalVideoEnabled(call: CallType, enabled: Bool) {
         Logger.debug("setLocalVideoEnabled(\(enabled))")
@@ -691,6 +791,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
             }
         }
     }
+#endif
 
     @MainActor
     public func updateDataMode(dataMode: DataMode) {
@@ -835,6 +936,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
 
     // MARK: - Group Call
 
+#if !os(watchOS)
     @MainActor
     public func createGroupCall(groupId: Data, sfuUrl: String, hkdfExtraInfo: Data, audioLevelsIntervalMillis: UInt64?, dredDuration: UInt8 = 0, videoCaptureController: VideoCaptureController) -> GroupCall? {
         Logger.debug("createGroupCall")
@@ -860,6 +962,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
         let groupCall = GroupCall(ringRtcCallManager: ringRtcCallManager, factory: factory, groupCallByClientId: self.groupCallByClientId, sfuUrl: sfuUrl, endorsementPublicKey: endorsementPublicKey, authCredentialPresentation: authCredentialPresentation, linkRootKey: linkRootKey, adminPasskey: adminPasskey, hkdfExtraInfo: hkdfExtraInfo, audioLevelsIntervalMillis: audioLevelsIntervalMillis, dredDuration: dredDuration, videoCaptureController: videoCaptureController)
         return groupCall
     }
+#endif
 
     // MARK: - Event Observers
 
@@ -1058,6 +1161,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
 
     // MARK: - Utility Observers
 
+#if !os(watchOS)
     func onCreateConnection(pcObserverOwned: UnsafeMutableRawPointer?, deviceId: UInt32, appCallContext: CallContext, audioJitterBufferMaxPackets: Int32, audioJitterBufferMaxTargetDelayMs: Int32) -> (connection: Connection, pc: UnsafeMutableRawPointer?) {
         Logger.debug("onCreateConnection")
 
@@ -1124,6 +1228,8 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
             delegate.callManager(self, onAddRemoteVideoTrack: callReference, track: stream.videoTracks[0])
         }
     }
+
+#endif
 
     func onCallConcluded(remote: UnsafeRawPointer) {
         Logger.debug("onCallConcluded")
@@ -1287,6 +1393,9 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
     func handleIncomingVideoTrack(clientId: UInt32, remoteDemuxId: UInt32, nativeVideoTrackBorrowedRc: UnsafeMutableRawPointer?) {
         Logger.debug("handleIncomingVideoTrack")
 
+#if os(watchOS)
+        failDebug("no video on the watch")
+#else
         guard let factory = self.factory else {
             failDebug("factory was unexpectedly nil")
             return
@@ -1309,6 +1418,7 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
 
             groupCall.handleIncomingVideoTrack(remoteDemuxId: remoteDemuxId, videoTrack: videoTrack)
         }
+#endif
     }
 
     func handlePeekChanged(clientId: UInt32, peekInfo: PeekInfo) {

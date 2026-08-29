@@ -4,7 +4,9 @@
 //
 
 import SignalRingRTC.RingRTC
+#if !os(watchOS)
 import WebRTC
+#endif
 
 /// Represents the connection state to a media server for a group call.
 @available(iOSApplicationExtension, unavailable)
@@ -111,7 +113,9 @@ public class RemoteDeviceState: Hashable {
     public internal(set) var isHigherResolutionPending: Bool
     public internal(set) var audioLevel: UInt16
 
+#if !os(watchOS)
     public internal(set) var videoTrack: RTCVideoTrack?
+#endif
 
     init(demuxId: UInt32, userId: UUID, mediaKeysReceived: Bool, addedTime: UInt64, speakerTime: UInt64, isHigherResolutionPending: Bool) {
         self.demuxId = demuxId
@@ -275,7 +279,9 @@ public class GroupCall {
     }
 
     let ringRtcCallManager: UnsafeMutableRawPointer
+#if !os(watchOS)
     let factory: RTCPeerConnectionFactory
+#endif
     var groupCallByClientId: GroupCallByClientId
     private let connectInfo: ConnectInfo
     let sfuUrl: String
@@ -295,6 +301,29 @@ public class GroupCall {
     public private(set) var remoteDeviceStates: [UInt32: RemoteDeviceState]
     public private(set) var peekInfo: PeekInfo?
 
+#if os(watchOS)
+    // Group calls are not built for the watch -- its Rust side owns the
+    // media and has no group-call client -- but the type stays, because the
+    // call manager's group plumbing, ring handling and peeking compile
+    // against it. Nothing creates one (createGroupCall is not built there),
+    // and connect() refuses.
+    @MainActor
+    internal init(ringRtcCallManager: UnsafeMutableRawPointer, groupCallByClientId: GroupCallByClientId, groupId: Data, sfuUrl: String, hkdfExtraInfo: Data, audioLevelsIntervalMillis: UInt64?, dredDuration: UInt8 = 0) {
+        self.ringRtcCallManager = ringRtcCallManager
+        self.groupCallByClientId = groupCallByClientId
+        self.connectInfo = .groupId(groupId)
+        self.sfuUrl = sfuUrl
+        self.hkdfExtraInfo = hkdfExtraInfo
+        self.audioLevelsIntervalMillis = audioLevelsIntervalMillis
+        self.dredDuration = dredDuration
+
+        self.endorsementPublicKey = nil
+        self.localDeviceState = LocalDeviceState()
+        self.remoteDeviceStates = [:]
+
+        Logger.debug("object! GroupCall created... \(ObjectIdentifier(self))")
+    }
+#else
     let videoCaptureController: VideoCaptureController
     var audioTrack: RTCAudioTrack?
     var videoTrack: RTCVideoTrack?
@@ -338,6 +367,7 @@ public class GroupCall {
 
         Logger.debug("object! GroupCall created... \(ObjectIdentifier(self))")
     }
+#endif
 
     deinit {
         Logger.debug("object! GroupCall destroyed... \(ObjectIdentifier(self))")
@@ -377,6 +407,10 @@ public class GroupCall {
                 }
             }
 
+#if os(watchOS)
+            failDebug("group calls are not built for the watch")
+            return false
+#else
             let audioConstraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
             let audioSource = self.factory.audioSource(with: audioConstraints)
             // Note: This must stay "audio1" to stay in sync with CreateSessionDescriptionForGroupCall.
@@ -437,6 +471,7 @@ public class GroupCall {
             // Now that we have a client id, let RingRTC know the current audio/video mute state.
             ringrtcSetOutgoingAudioMuted(self.ringRtcCallManager, clientId, isOutgoingAudioMuted)
             ringrtcSetOutgoingVideoMuted(self.ringRtcCallManager, clientId, isOutgoingVideoMuted)
+#endif
         }
 
         guard let clientId = self.clientId else {
@@ -471,8 +506,10 @@ public class GroupCall {
         }
 
         // When leaving, make sure outgoing media is stopped as soon as possible.
+#if !os(watchOS)
         self.audioTrack?.isEnabled = false
         self.videoTrack?.isEnabled = false
+#endif
 
         ringrtcLeave(self.ringRtcCallManager, clientId)
     }
@@ -487,8 +524,10 @@ public class GroupCall {
         }
 
         // When disconnecting, make sure outgoing media is stopped as soon as possible.
+#if !os(watchOS)
         self.audioTrack?.isEnabled = false
         self.videoTrack?.isEnabled = false
+#endif
 
         ringrtcDisconnect(self.ringRtcCallManager, clientId)
     }
@@ -530,7 +569,9 @@ public class GroupCall {
             Logger.debug("setOutgoingAudioMuted")
 
             _isOutgoingAudioMuted = newValue
+#if !os(watchOS)
             self.audioTrack?.isEnabled = !_isOutgoingAudioMuted
+#endif
 
             guard let clientId = self.clientId else {
                 Logger.warn("no clientId defined for groupCall")
@@ -546,7 +587,9 @@ public class GroupCall {
         Logger.debug("setOutgoingAudioRemotelyMuted")
 
         _isOutgoingAudioMuted = true
+#if !os(watchOS)
         self.audioTrack?.isEnabled = false
+#endif
 
         guard let clientId = self.clientId else {
             Logger.warn("no clientId defined for groupCall")
@@ -578,7 +621,9 @@ public class GroupCall {
             Logger.debug("setOutgoingVideoMuted")
 
             _isOutgoingVideoMuted = newValue
+#if !os(watchOS)
             self.videoTrack?.isEnabled = !_isOutgoingVideoMuted
+#endif
 
             guard let clientId = self.clientId else {
                 Logger.warn("no clientId defined for groupCall")
@@ -849,7 +894,9 @@ public class GroupCall {
             // Maintain the video track and audio level if one already exists.
             let existingDeviceState = self.remoteDeviceStates[remoteDeviceState.demuxId]
             if existingDeviceState != nil {
+#if !os(watchOS)
                 remoteDeviceState.videoTrack = existingDeviceState?.videoTrack
+#endif
                 remoteDeviceState.audioLevel = existingDeviceState?.audioLevel ?? 0
             }
 
@@ -862,6 +909,7 @@ public class GroupCall {
         self.delegate?.groupCall(onRemoteDeviceStatesChanged: self)
     }
 
+#if !os(watchOS)
     @MainActor
     func handleIncomingVideoTrack(remoteDemuxId: UInt32, videoTrack: RTCVideoTrack) {
         Logger.debug("handleIncomingVideoTrack() for remoteDemuxId: 0x\(String(remoteDemuxId, radix: 16))")
@@ -875,6 +923,7 @@ public class GroupCall {
 
         self.delegate?.groupCall(onRemoteDeviceStatesChanged: self)
     }
+#endif
 
     @MainActor
     func handlePeekChanged(peekInfo: PeekInfo) {
@@ -899,8 +948,10 @@ public class GroupCall {
         self.localDeviceState = LocalDeviceState()
         self.remoteDeviceStates = [:]
         self.peekInfo = nil
+#if !os(watchOS)
         self.audioTrack = nil
         self.videoTrack = nil
+#endif
 
         ringrtcDeleteGroupCallClient(self.ringRtcCallManager, clientId)
 

@@ -4,7 +4,9 @@
 //
 
 import SignalRingRTC.RingRTC
+#if !os(watchOS)
 import WebRTC
+#endif
 
 @available(iOSApplicationExtension, unavailable)
 protocol CallManagerInterfaceDelegate: AnyObject {
@@ -22,8 +24,10 @@ protocol CallManagerInterfaceDelegate: AnyObject {
     func sendCallMessage(recipientUuid: UUID, message: Data, urgency: CallMessageUrgency)
     func sendCallMessageToGroup(groupId: Data, message: Data, urgency: CallMessageUrgency, overrideRecipients: [UUID])
     func sendCallMessageToAdhocGroup(message: Data, urgency: CallMessageUrgency, expiration: Date, recipientsToEndorsements: [UUID: Data])
+#if !os(watchOS)
     func onCreateConnection(pcObserverOwned: UnsafeMutableRawPointer?, deviceId: UInt32, appCallContext: CallContext, audioJitterBufferMaxPackets: Int32, audioJitterBufferMaxTargetDelayMs: Int32) -> (connection: Connection, pc: UnsafeMutableRawPointer?)
     func onConnectMedia(remote: UnsafeRawPointer, appCallContext: CallContext, stream: RTCMediaStream)
+#endif
     func onCallConcluded(remote: UnsafeRawPointer)
 
     // Group Calls
@@ -235,6 +239,7 @@ class CallManagerInterface {
         delegate.sendCallMessageToAdhocGroup(message: message, urgency: urgency, expiration: expiration, recipientsToEndorsements: recipientsToEndorsements)
     }
 
+#if !os(watchOS)
     func onCreateConnection(pcObserverOwned: UnsafeMutableRawPointer?, deviceId: UInt32, appCallContext: CallContext, audioJitterBufferMaxPackets: Int32, audioJitterBufferMaxTargetDelayMs: Int32) -> (connection: Connection, pc: UnsafeMutableRawPointer?)? {
         guard let delegate = self.callManagerObserverDelegate else {
             return nil
@@ -250,6 +255,7 @@ class CallManagerInterface {
 
         delegate.onConnectMedia(remote: remote, appCallContext: appCallContext, stream: stream)
     }
+#endif
 
     func onCallConcluded(remote: UnsafeRawPointer) {
         guard let delegate = self.callManagerObserverDelegate else {
@@ -773,6 +779,7 @@ func callManagerInterfaceSendCallMessageToAdhocGroup(object: UnsafeMutableRawPoi
     obj.sendCallMessageToAdhocGroup(message: message, urgency: urgency, expiration: expiration, recipientsToEndorsements: recipientsToEndorsements)
 }
 
+#if !os(watchOS)
 @available(iOSApplicationExtension, unavailable)
 func callManagerInterfaceOnCreateConnectionInterface(object: UnsafeMutableRawPointer?, pcObserverOwned: UnsafeMutableRawPointer?, deviceId: UInt32, context: UnsafeMutableRawPointer?, audioJitterBufferMaxPackets: Int32, audioJitterBufferMaxTargetDelayMs: Int32) -> AppConnectionInterface {
     guard let object = object else {
@@ -878,6 +885,25 @@ func callManagerInterfaceOnConnectMedia(object: UnsafeMutableRawPointer?, remote
 
     obj.onConnectedMedia(remote: remote, appCallContext: appCallContext, stream: mediaStream)
 }
+
+#else
+// Rust builds the PeerConnection and keeps the incoming media itself on the
+// watch (ios_platform.rs, the watchos cfg), so none of these three is ever
+// called; AppInterface still has the slots.
+func callManagerInterfaceOnCreateConnectionInterface(object: UnsafeMutableRawPointer?, pcObserverOwned: UnsafeMutableRawPointer?, deviceId: UInt32, context: UnsafeMutableRawPointer?, audioJitterBufferMaxPackets: Int32, audioJitterBufferMaxTargetDelayMs: Int32) -> AppConnectionInterface {
+    failDebug("onCreateConnection reached Swift on the watch")
+    return AppConnectionInterface(object: nil, pc: nil, destroy: nil)
+}
+
+func callManagerInterfaceOnCreateMediaStreamInterface(object: UnsafeMutableRawPointer?, connection: UnsafeMutableRawPointer?) -> AppMediaStreamInterface {
+    failDebug("onCreateMediaStream reached Swift on the watch")
+    return AppMediaStreamInterface(object: nil, destroy: nil, createMediaStream: nil)
+}
+
+func callManagerInterfaceOnConnectMedia(object: UnsafeMutableRawPointer?, remote: UnsafeRawPointer?, context: UnsafeMutableRawPointer?, stream: UnsafeRawPointer?) {
+    failDebug("onConnectMedia reached Swift on the watch")
+}
+#endif
 
 @available(iOSApplicationExtension, unavailable)
 func callManagerInterfaceOnCallConcluded(object: UnsafeMutableRawPointer?, remote: UnsafeRawPointer?) {

@@ -38,8 +38,15 @@ use crate::{
 pub type IosCallManager = CallManager<IosPlatform>;
 
 /// Creates a new IosCallManager object.
-pub fn create(app_interface: AppInterface, http_client: http::ios::Client) -> Result<*mut c_void> {
+pub fn create(
+    app_interface: AppInterface,
+    http_client: http::ios::Client,
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))] field_trials: &str,
+) -> Result<*mut c_void> {
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     let platform = IosPlatform::new(app_interface)?;
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    let platform = IosPlatform::new(app_interface, field_trials)?;
     let call_manager = IosCallManager::new(platform, http_client)?;
     let call_manager_box = Box::new(call_manager);
     Ok(Box::into_raw(call_manager_box) as *mut c_void)
@@ -83,6 +90,10 @@ pub fn proceed(
 ) -> Result<()> {
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
     let call_id = CallId::from(call_id);
+    // The iOS wrapper creates each call's audio track disabled; the watch's
+    // one track outlives calls, so it is reset here.
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    call_manager.platform()?.set_outgoing_audio_enabled(false);
     call_manager.proceed(call_id, call_context, call_config, audio_levels_interval)
 }
 
@@ -337,6 +348,8 @@ pub fn get_active_call_context(call_manager: *mut IosCallManager) -> Result<*mut
 /// CMI request to set the audio status
 pub fn set_audio_enable(call_manager: *mut IosCallManager, enable: bool) -> Result<()> {
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    call_manager.platform()?.set_outgoing_audio_enabled(enable);
     let mut active_connection = call_manager.active_connection()?;
     active_connection.update_sender_status(signaling::SenderStatus {
         audio_enabled: Some(enable),

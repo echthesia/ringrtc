@@ -582,6 +582,7 @@ pub fn string_from_app_slice(app_slice: &AppByteSlice) -> Option<String> {
     Some(std::str::from_utf8(app_slice.as_slice()?).ok()?.to_string())
 }
 
+#[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub unsafe extern "C" fn ringrtcCreateCallManager(
@@ -590,6 +591,31 @@ pub unsafe extern "C" fn ringrtcCreateCallManager(
 ) -> *mut c_void {
     if let Some(http_client) = unsafe { httpClient.as_ref() } {
         call_manager::create(appInterface, http_client.clone()).unwrap_or(std::ptr::null_mut())
+    } else {
+        std::ptr::null_mut()
+    }
+}
+
+/// The watch's `ringrtcCreateCallManager`. iOS sets WebRTC's field trials
+/// through the ObjC SDK before it creates its PeerConnectionFactory; the
+/// watch's factory is created in here, so the trials come in with it, in
+/// WebRTC's own "Trial/Group/Trial/Group/" form. Its own name rather than
+/// a cfg'd parameter because cbindgen emits every cfg unguarded.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub unsafe extern "C" fn ringrtcCreateCallManagerWithFieldTrials(
+    appInterface: AppInterface,
+    httpClient: *const http::ios::Client,
+    fieldTrials: AppByteSlice,
+) -> *mut c_void {
+    let Some(field_trials) = string_from_app_slice(&fieldTrials) else {
+        error!("ringrtcCreateCallManagerWithFieldTrials: field trials are not UTF-8");
+        return std::ptr::null_mut();
+    };
+    if let Some(http_client) = unsafe { httpClient.as_ref() } {
+        call_manager::create(appInterface, http_client.clone(), &field_trials)
+            .unwrap_or(std::ptr::null_mut())
     } else {
         std::ptr::null_mut()
     }

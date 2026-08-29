@@ -1145,15 +1145,39 @@ impl sfu::Delegate for IosPlatform {
 
 impl IosPlatform {
     /// Create a new IOSPlatform object.
-    pub fn new(app_interface: AppInterface) -> Result<Self> {
+    ///
+    /// On the watch this also creates the PeerConnectionFactory, which is
+    /// where WebRTC's field trials are set: iOS hands them to the ObjC SDK
+    /// before creating its factory, the watch has no SDK, so the string
+    /// ("Trial/Group/Trial/Group/", WebRTC's own format) comes in here.
+    pub fn new(
+        app_interface: AppInterface,
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        field_trials: &str,
+    ) -> Result<Self> {
         debug!("IOSPlatform::new: {:?}", app_interface);
 
-        // Field trials go to the ObjC SDK on iOS; the watch has none to set.
+        // iOS routes WebRTC's own log stream through the ObjC SDK's
+        // RTCCallbackLogger; the watch has no SDK, so the C++ sink is
+        // installed here, once (Rust_setLogger adds a stream each call),
+        // into the same Rust logger the app already receives.
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        {
+            static WEBRTC_LOG_SINK: std::sync::Once = std::sync::Once::new();
+            WEBRTC_LOG_SINK.call_once(|| {
+                crate::webrtc::logging::set_logger(log::LevelFilter::Info);
+            });
+        }
+
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         let peer_connection_factory =
-            PeerConnectionFactory::new(&AudioConfig::default(), false, "", None)?;
+            PeerConnectionFactory::new(&AudioConfig::default(), false, field_trials, None)?;
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
+        // Off until the app enables it, as the iOS wrapper's per-call track
+        // starts (proceed() makes sure of it again for each call).
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        outgoing_audio_track.set_enabled(false);
 
         Ok(Self {
             app_interface,
@@ -1162,6 +1186,14 @@ impl IosPlatform {
             #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
             outgoing_audio_track,
         })
+    }
+
+    /// The outgoing audio track is the watch's, not the app's (iOS keeps it
+    /// in Swift and toggles `isEnabled` there), so enabling audio has to
+    /// reach it here as well as the sender status.
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    pub fn set_outgoing_audio_enabled(&self, enabled: bool) {
+        self.outgoing_audio_track.set_enabled(enabled);
     }
 }
 

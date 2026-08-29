@@ -112,7 +112,10 @@ pub mod webrtc {
     pub mod ice_gatherer;
     #[cfg(feature = "injectable_network")]
     pub mod injectable_network;
-    #[cfg(feature = "native")]
+    #[cfg(any(
+        feature = "native",
+        all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))
+    ))]
     pub mod logging;
     pub mod media;
     pub mod network;
