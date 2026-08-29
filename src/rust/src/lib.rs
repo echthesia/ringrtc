@@ -83,7 +83,11 @@ mod ios {
         pub mod call_summary;
     }
     mod call_manager;
+    // Both exist to take a PeerConnection and a media stream from Swift;
+    // the watch builds those in Rust (see ios_platform's watch cfg).
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     mod error;
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     mod ios_media_stream;
     mod ios_platform;
 }

@@ -14,6 +14,14 @@ use std::{
 
 use anyhow::anyhow;
 
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+use crate::webrtc::{
+    media::AudioTrack,
+    peer_connection_factory::{
+        AudioConfig, IceServer, PeerConnectionFactory, RffiPeerConnectionKind,
+    },
+};
+
 use crate::{
     common::{
         ApplicationEvent, CallConfig, CallDirection, CallEndReason, CallId, CallMediaType,
@@ -27,30 +35,36 @@ use crate::{
         platform::{Platform, PlatformItem},
         signaling,
     },
-    ios::{
-        api::{
-            call_manager_interface::{
-                AppByteSlice, AppByteSliceArray, AppCallContext, AppConnectionInterface,
-                AppIceCandidateArray, AppInterface, AppObject, AppOptionalBool, AppOptionalUInt32,
-                AppRaisedHandsArray, AppReaction, AppReactionsArray, AppReceivedAudioLevel,
-                AppReceivedAudioLevelArray, AppRemoteDeviceState, AppRemoteDeviceStateArray,
-                AppUuidArray,
-            },
-            call_summary::rtc_callsummary_CallSummary,
+    ios::api::{
+        call_manager_interface::{
+            AppByteSlice, AppByteSliceArray, AppCallContext, AppConnectionInterface,
+            AppIceCandidateArray, AppInterface, AppObject, AppOptionalBool, AppOptionalUInt32,
+            AppRaisedHandsArray, AppReaction, AppReactionsArray, AppReceivedAudioLevel,
+            AppReceivedAudioLevelArray, AppRemoteDeviceState, AppRemoteDeviceStateArray,
+            AppUuidArray,
         },
-        error::IosError,
-        ios_media_stream::IosMediaStream,
+        call_summary::rtc_callsummary_CallSummary,
     },
     lite::sfu::{self, DemuxId, PeekInfo, PeekResult, UserId},
     webrtc::{
-        self,
         media::{MediaStream, VideoTrack},
-        peer_connection::{AudioLevel, PeerConnection, ReceivedAudioLevel, RffiPeerConnection},
+        peer_connection::{AudioLevel, ReceivedAudioLevel},
         peer_connection_observer::{NetworkRoute, PeerConnectionObserver},
     },
 };
 
+// What the iOS shape needs to take a PeerConnection from Swift.
+#[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
+use crate::{
+    ios::{error::IosError, ios_media_stream::IosMediaStream},
+    webrtc::{
+        self,
+        peer_connection::{PeerConnection, RffiPeerConnection},
+    },
+};
+
 /// Concrete type for iOS AppIncomingMedia objects.
+#[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
 impl PlatformItem for IosMediaStream {}
 
 /// Concrete type for iOS AppConnection objects.
@@ -58,12 +72,39 @@ pub type IosConnection = Arc<AppConnectionInterface>;
 impl PlatformItem for IosConnection {}
 
 /// Concrete type for iOS AppCallContext objects.
+#[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
 pub type IosCallContext = Arc<AppCallContext>;
+
+/// The watch's call context: the app's object plus what Swift keeps to
+/// itself on iOS. There the app builds the RTCPeerConnection -- ICE servers,
+/// hide-IP and all -- through the ObjC SDK and hands Rust the result. The
+/// watch builds without the ObjC SDK, so Rust builds the PeerConnection (as
+/// the desktop platform does) and needs those two things here.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[derive(Clone, Debug)]
+pub struct WatchCallContext {
+    pub app: AppCallContext,
+    pub ice_servers: Vec<IceServer>,
+    pub hide_ip: bool,
+}
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+pub type IosCallContext = Arc<WatchCallContext>;
 impl PlatformItem for IosCallContext {}
+
+/// The watch hands incoming media straight through: remote audio plays out
+/// of the ADM the factory owns, and there is no remote video to attach.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+impl PlatformItem for MediaStream {}
 
 /// iOS implementation of platform::Platform.
 pub struct IosPlatform {
     app_interface: AppInterface,
+    // On the watch Rust owns the factory (and with it the ADM) and the one
+    // outgoing audio track; on iOS both are the app's, made in Swift.
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    peer_connection_factory: PeerConnectionFactory,
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    outgoing_audio_track: AudioTrack,
 }
 
 unsafe impl Sync for IosPlatform {}
@@ -153,11 +194,69 @@ impl IosCallData {
 impl PlatformItem for IosCallData {}
 
 impl Platform for IosPlatform {
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     type AppIncomingMedia = IosMediaStream;
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    type AppIncomingMedia = MediaStream;
     type AppRemotePeer = IosCallData;
     type AppConnection = IosConnection;
     type AppCallContext = IosCallContext;
 
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    fn create_connection(
+        &mut self,
+        call: &Call<Self>,
+        remote_device_id: DeviceId,
+        connection_type: ConnectionType,
+        signaling_version: signaling::Version,
+        call_config: CallConfig,
+        audio_levels_interval: Option<Duration>,
+    ) -> Result<Connection<Self>> {
+        info!(
+            "create_connection(): call_id: {} remote_device_id: {}, signaling_version: {:?}, call_config: {:?}, audio_levels_interval: {:?}",
+            call.call_id(),
+            remote_device_id,
+            signaling_version,
+            call_config,
+            audio_levels_interval,
+        );
+
+        let context = call.call_context()?;
+        let connection = Connection::new(
+            call.clone(),
+            remote_device_id,
+            connection_type,
+            call_config,
+            audio_levels_interval,
+            None, // no incoming video on the watch
+        )?;
+
+        let pc_observer = PeerConnectionObserver::new(
+            connection.get_connection_ptr()?,
+            false, /* enable_frame_encryption */
+            false, /* enable_video_frame_event */
+            false, /* enable_video_frame_content */
+        )?;
+        let kind = if context.hide_ip {
+            RffiPeerConnectionKind::Relayed
+        } else {
+            RffiPeerConnectionKind::Direct
+        };
+        let pc = self.peer_connection_factory.create_peer_connection(
+            pc_observer,
+            kind,
+            &connection.call_config().audio_jitter_buffer_config,
+            connection.call_config().audio_rtcp_report_interval_ms,
+            &context.ice_servers,
+            self.outgoing_audio_track.clone(),
+            None, // audio only
+        )?;
+
+        connection.set_peer_connection(pc)?;
+        Ok(connection)
+    }
+
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     fn create_connection(
         &mut self,
         call: &Call<Self>,
@@ -622,6 +721,29 @@ impl Platform for IosPlatform {
         Ok(())
     }
 
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    fn create_incoming_media(
+        &self,
+        _connection: &Connection<Self>,
+        incoming_media: MediaStream,
+    ) -> Result<Self::AppIncomingMedia> {
+        info!("create_incoming_media():");
+        Ok(incoming_media)
+    }
+
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    fn connect_incoming_media(
+        &self,
+        _remote_peer: &Self::AppRemotePeer,
+        _app_call_context: &Self::AppCallContext,
+        _incoming_media: &Self::AppIncomingMedia,
+    ) -> Result<()> {
+        // Remote audio plays through the ADM; nothing for the app to attach.
+        info!("connect_incoming_media(): nothing to attach on the watch");
+        Ok(())
+    }
+
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     fn create_incoming_media(
         &self,
         connection: &Connection<Self>,
@@ -646,6 +768,7 @@ impl Platform for IosPlatform {
         IosMediaStream::new(app_media_stream_interface, incoming_media)
     }
 
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     fn connect_incoming_media(
         &self,
         remote_peer: &Self::AppRemotePeer,
@@ -1025,7 +1148,20 @@ impl IosPlatform {
     pub fn new(app_interface: AppInterface) -> Result<Self> {
         debug!("IOSPlatform::new: {:?}", app_interface);
 
-        Ok(Self { app_interface })
+        // Field trials go to the ObjC SDK on iOS; the watch has none to set.
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        let peer_connection_factory =
+            PeerConnectionFactory::new(&AudioConfig::default(), false, "", None)?;
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
+
+        Ok(Self {
+            app_interface,
+            #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+            peer_connection_factory,
+            #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+            outgoing_audio_track,
+        })
     }
 }
 

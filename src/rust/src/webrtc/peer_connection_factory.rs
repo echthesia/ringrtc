@@ -5,7 +5,10 @@
 
 //! WebRTC Peer Connection
 
-#[cfg(all(not(feature = "sim"), feature = "native"))]
+#[cfg(any(
+    all(not(feature = "sim"), feature = "native"),
+    all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))
+))]
 use std::ffi::c_void;
 #[cfg(all(not(feature = "sim"), feature = "native"))]
 use std::sync::{Arc, Mutex};
@@ -136,6 +139,16 @@ pub struct RffiAudioConfig {
     pub rust_audio_device_callbacks: webrtc::ptr::Borrowed<c_void>,
     #[cfg(all(not(feature = "sim"), feature = "native"))]
     pub free_adm_cb: unsafe extern "C" fn(webrtc::ptr::Borrowed<c_void>),
+    // The watch has no Rust ADM: rffi creates the platform's own (an
+    // AVAudioEngine AudioDeviceModule, behind RINGRTC_WATCHOS in
+    // peer_connection_factory.cc) and ignores these, which are null so that
+    // the C struct keeps its desktop layout.
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    pub adm_borrowed: webrtc::ptr::Borrowed<c_void>,
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    pub rust_audio_device_callbacks: webrtc::ptr::Borrowed<c_void>,
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    pub free_adm_cb: Option<unsafe extern "C" fn(webrtc::ptr::Borrowed<c_void>)>,
 }
 pub struct RffiAudioConfigWrapper {
     rffi: RffiAudioConfig,
@@ -222,6 +235,12 @@ impl AudioConfig {
                     .to_void(),
                 #[cfg(all(not(feature = "sim"), feature = "native"))]
                 free_adm_cb: decrement_adm_ref_count,
+                #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+                adm_borrowed: webrtc::ptr::Borrowed::null(),
+                #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+                rust_audio_device_callbacks: webrtc::ptr::Borrowed::null(),
+                #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+                free_adm_cb: None,
             },
             #[cfg(all(not(feature = "sim"), feature = "native"))]
             adm: adm_arc,

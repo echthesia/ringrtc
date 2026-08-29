@@ -5,7 +5,7 @@
 
 //! iOS Call Manager
 
-use std::{ffi::c_void, sync::Arc, time::Duration};
+use std::{ffi::c_void, time::Duration};
 
 use anyhow::anyhow;
 
@@ -19,8 +19,8 @@ use crate::{
     },
     error::RingRtcError,
     ios::{
-        api::call_manager_interface::{AppCallContext, AppInterface},
-        ios_platform::{IosCallData, IosPlatform},
+        api::call_manager_interface::AppInterface,
+        ios_platform::{IosCallContext, IosCallData, IosPlatform},
     },
     lite::{
         call_links::CallLinkRootKey,
@@ -77,18 +77,13 @@ pub fn call(
 pub fn proceed(
     call_manager: *mut IosCallManager,
     call_id: u64,
-    app_call_context: AppCallContext,
+    call_context: IosCallContext,
     call_config: CallConfig,
     audio_levels_interval: Option<Duration>,
 ) -> Result<()> {
     let call_manager = unsafe { ptr_as_mut(call_manager)? };
     let call_id = CallId::from(call_id);
-    call_manager.proceed(
-        call_id,
-        Arc::new(app_call_context),
-        call_config,
-        audio_levels_interval,
-    )
+    call_manager.proceed(call_id, call_context, call_config, audio_levels_interval)
 }
 
 /// Application notification that the sending of the previous message was a success.
@@ -333,7 +328,10 @@ pub fn get_active_call_context(call_manager: *mut IosCallManager) -> Result<*mut
     let call = call_manager.active_call()?;
     let app_call_context = call.call_context()?;
 
-    Ok(app_call_context.object)
+    #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
+    return Ok(app_call_context.object);
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    return Ok(app_call_context.app.object);
 }
 
 /// CMI request to set the audio status

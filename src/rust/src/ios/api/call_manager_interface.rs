@@ -5,9 +5,12 @@
 
 //! iOS Call Manager Interface
 
-use std::{convert::TryFrom, ffi::c_void, fmt, ptr, slice, time::Duration};
+use std::{convert::TryFrom, ffi::c_void, fmt, ptr, slice, sync::Arc, time::Duration};
 
 use libc::size_t;
+
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+use crate::ios::ios_platform::WatchCallContext;
 
 use crate::{
     common::{CallConfig, CallMediaType, DataMode, DeviceId},
@@ -676,6 +679,7 @@ pub extern "C" fn ringrtcCall(
     }
 }
 
+#[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
 pub extern "C" fn ringrtcProceed(
@@ -696,7 +700,7 @@ pub extern "C" fn ringrtcProceed(
     match call_manager::proceed(
         callManager as *mut IosCallManager,
         callId,
-        appCallContext,
+        Arc::new(appCallContext),
         CallConfig::default()
             .with_data_mode(DataMode::from_i32(dataMode))
             .with_enable_vp9_encode(enable_vp9_encode)
@@ -708,6 +712,106 @@ pub extern "C" fn ringrtcProceed(
             // Return the object reference back as indication of success.
             callManager
         }
+        Err(_e) => ptr::null_mut(),
+    }
+}
+
+/// Structure for passing one ICE server from the application (the watch).
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[repr(C)]
+#[derive(Debug)]
+#[allow(non_snake_case)]
+pub struct AppIceServer {
+    pub username: AppByteSlice,
+    pub password: AppByteSlice,
+    pub hostname: AppByteSlice,
+    pub urls: AppByteSliceArray,
+}
+
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[repr(C)]
+#[derive(Debug)]
+#[allow(non_snake_case)]
+pub struct AppIceServerArray {
+    pub servers: *const AppIceServer,
+    pub count: size_t,
+}
+
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+fn ice_servers_from_app(servers: &AppIceServerArray) -> Option<Vec<pcf::IceServer>> {
+    if servers.count == 0 {
+        return Some(vec![]);
+    }
+    if servers.servers.is_null() {
+        return None;
+    }
+    let servers = unsafe { slice::from_raw_parts(servers.servers, servers.count) };
+    servers
+        .iter()
+        .map(|server| {
+            let urls = if server.urls.count == 0 {
+                vec![]
+            } else {
+                if server.urls.slices.is_null() {
+                    return None;
+                }
+                unsafe { slice::from_raw_parts(server.urls.slices, server.urls.count) }
+                    .iter()
+                    .map(string_from_app_slice)
+                    .collect::<Option<Vec<_>>>()?
+            };
+            Some(pcf::IceServer::new(
+                string_from_app_slice(&server.username).unwrap_or_default(),
+                string_from_app_slice(&server.password).unwrap_or_default(),
+                string_from_app_slice(&server.hostname).unwrap_or_default(),
+                urls,
+            ))
+        })
+        .collect()
+}
+
+/// The watch's `ringrtcProceed`. On iOS the ICE servers and the hide-IP
+/// choice go into the RTCPeerConnection the app builds in Swift; the watch
+/// builds without the ObjC SDK, so Rust builds the PeerConnection and takes
+/// them here. Audio only, so no VP9 flags. A server with no URLs is skipped
+/// by the C++ side, as on desktop.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "C" fn ringrtcProceedWithIceServers(
+    callManager: *mut c_void,
+    callId: u64,
+    appCallContext: AppCallContext,
+    iceServers: AppIceServerArray,
+    hideIp: bool,
+    dataMode: i32,
+    audioLevelsIntervalMillis: u64,
+    dred_duration: u8,
+) -> *mut c_void {
+    let audio_levels_interval = if audioLevelsIntervalMillis == 0 {
+        None
+    } else {
+        Some(Duration::from_millis(audioLevelsIntervalMillis))
+    };
+    let Some(ice_servers) = ice_servers_from_app(&iceServers) else {
+        error!("ringrtcProceedWithIceServers(): malformed ICE server array");
+        return ptr::null_mut();
+    };
+    let call_context = Arc::new(WatchCallContext {
+        app: appCallContext,
+        ice_servers,
+        hide_ip: hideIp,
+    });
+    match call_manager::proceed(
+        callManager as *mut IosCallManager,
+        callId,
+        call_context,
+        CallConfig::default()
+            .with_data_mode(DataMode::from_i32(dataMode))
+            .with_dred_duration(dred_duration),
+        audio_levels_interval,
+    ) {
+        Ok(_v) => callManager,
         Err(_e) => ptr::null_mut(),
     }
 }
