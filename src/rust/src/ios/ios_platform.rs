@@ -47,7 +47,7 @@ use crate::{
     },
     lite::sfu::{self, DemuxId, PeekInfo, PeekResult, UserId},
     webrtc::{
-        media::{MediaStream, VideoTrack},
+        media::{MediaStream, VideoSource, VideoTrack},
         peer_connection::{AudioLevel, ReceivedAudioLevel},
         peer_connection_observer::{NetworkRoute, PeerConnectionObserver},
     },
@@ -99,12 +99,22 @@ impl PlatformItem for MediaStream {}
 /// iOS implementation of platform::Platform.
 pub struct IosPlatform {
     app_interface: AppInterface,
-    // On the watch Rust owns the factory (and with it the ADM) and the one
-    // outgoing audio track; on iOS both are the app's, made in Swift.
+    // On the watch Rust owns the factory (and with it the ADM) and the
+    // outgoing tracks; on iOS all of these are the app's, made in Swift.
     #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
     peer_connection_factory: PeerConnectionFactory,
     #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
     outgoing_audio_track: AudioTrack,
+    // Disabled and never fed a frame: it exists so every offer negotiates an
+    // m=video section. offer_to_v4 reads the local offer's video codecs into
+    // the V4 proto, and a stock peer composes its SDP from those; an offer
+    // with none is unusable ("Failed to set remote video description send
+    // parameters", InternalFailure, measured against Signal Desktop). The
+    // source is kept because the track only borrows a ref to it.
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    outgoing_video_track: VideoTrack,
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    _outgoing_video_source: VideoSource,
 }
 
 unsafe impl Sync for IosPlatform {}
@@ -249,7 +259,9 @@ impl Platform for IosPlatform {
             connection.call_config().audio_rtcp_report_interval_ms,
             &context.ice_servers,
             self.outgoing_audio_track.clone(),
-            None, // audio only
+            // Disabled, frameless; present so the offer carries video codecs
+            // a stock peer can compose SDP from (see the field).
+            Some(self.outgoing_video_track.clone()),
         )?;
 
         connection.set_peer_connection(pc)?;
@@ -1178,6 +1190,15 @@ impl IosPlatform {
         // starts (proceed() makes sure of it again for each call).
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         outgoing_audio_track.set_enabled(false);
+        // See the field: SDP negotiation only, Desktop's own idiom
+        // (electron.rs makes its one track up front and disables it).
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        let outgoing_video_source = peer_connection_factory.create_outgoing_video_source()?;
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        let outgoing_video_track =
+            peer_connection_factory.create_outgoing_video_track(&outgoing_video_source)?;
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        outgoing_video_track.set_enabled(false);
 
         Ok(Self {
             app_interface,
@@ -1185,6 +1206,10 @@ impl IosPlatform {
             peer_connection_factory,
             #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
             outgoing_audio_track,
+            #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+            outgoing_video_track,
+            #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+            _outgoing_video_source: outgoing_video_source,
         })
     }
 
