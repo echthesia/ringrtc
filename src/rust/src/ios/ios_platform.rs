@@ -15,6 +15,14 @@ use std::{
 use anyhow::anyhow;
 
 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+use crate::error::RingRtcError;
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+use crate::ios::api::call_manager_interface::AppUdpTransport;
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+use crate::webrtc::{injectable_network, injectable_network::InjectableNetwork, network::NetworkInterfaceType};
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+use std::net::{IpAddr, SocketAddr};
 use crate::webrtc::{
     media::AudioTrack,
     peer_connection_factory::{
@@ -1166,6 +1174,8 @@ impl IosPlatform {
         app_interface: AppInterface,
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         field_trials: &str,
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        udp_transport: AppUdpTransport,
     ) -> Result<Self> {
         debug!("IOSPlatform::new: {:?}", app_interface);
 
@@ -1183,7 +1193,21 @@ impl IosPlatform {
 
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         let peer_connection_factory =
-            PeerConnectionFactory::new(&AudioConfig::default(), false, field_trials, None)?;
+            PeerConnectionFactory::new(&AudioConfig::default(), true, field_trials, None)?;
+        // The injectable network stands in for the whole OS network stack:
+        // the TN3135 grant arms Network.framework flows only, so packets ride
+        // Swift-owned NWConnections (AppUdpTransport out, ringrtcReceivedUdp
+        // back in). Requires the `injectable_network` cargo feature -- the
+        // watch build always enables it (scripts/build-ringrtc.sh).
+        #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+        {
+            let injectable = peer_connection_factory
+                .injectable_network()
+                .ok_or(RingRtcError::CreatePeerConnectionFactory)?;
+            injectable.set_sender(Box::new(SwiftUdpSender(udp_transport)));
+            add_wifi_interface(&injectable);
+            let _ = INJECTABLE_NETWORK.set(InjectableNetworkHandle(injectable));
+        }
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
         // Off until the app enables it, as the iOS wrapper's per-call track
@@ -1271,5 +1295,99 @@ fn app_option_from_bool(v: Option<bool>) -> AppOptionalBool {
             value: v,
             valid: true,
         },
+    }
+}
+
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+static INJECTABLE_NETWORK: std::sync::OnceLock<InjectableNetworkHandle> = std::sync::OnceLock::new();
+
+/// One factory per process (made in `IosPlatform::new`), so one handle for
+/// `ringrtcReceivedUdp` to reach.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+struct InjectableNetworkHandle(InjectableNetwork);
+// SAFETY: `receive_udp` is thread-safe -- the C++ side copies the packet and
+// posts it to WebRTC's network thread -- and the handle keeps the factory
+// alive for as long as it exists.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+unsafe impl Send for InjectableNetworkHandle {}
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+unsafe impl Sync for InjectableNetworkHandle {}
+
+/// The inbound path: `ringrtcReceivedUdp` (Swift's NWConnection receive
+/// loops) to the injectable network.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+pub(crate) fn received_udp(source: SocketAddr, dest: SocketAddr, data: Vec<u8>) {
+    if let Some(handle) = INJECTABLE_NETWORK.get() {
+        handle
+            .0
+            .receive_udp(injectable_network::Packet { source, dest, data });
+    } else {
+        warn!("received_udp: no injectable network yet");
+    }
+}
+
+/// The outbound path: the injectable network's sender, calling Swift.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+struct SwiftUdpSender(AppUdpTransport);
+// SAFETY: sendUdp is called on WebRTC's network thread only; the Swift object
+// is retained until `destroy`, and the Swift side copies every slice before
+// returning.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+unsafe impl Send for SwiftUdpSender {}
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+unsafe impl Sync for SwiftUdpSender {}
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+impl Drop for SwiftUdpSender {
+    fn drop(&mut self) {
+        (self.0.destroy)(self.0.object);
+    }
+}
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+impl injectable_network::PacketSender for SwiftUdpSender {
+    fn send_udp(&self, packet: injectable_network::Packet) {
+        let src_ip = packet.source.ip().to_string().into_bytes();
+        let dst_ip = packet.dest.ip().to_string().into_bytes();
+        (self.0.sendUdp)(
+            self.0.object,
+            app_slice_from_bytes(Some(&src_ip)),
+            packet.source.port(),
+            app_slice_from_bytes(Some(&dst_ip)),
+            packet.dest.port(),
+            app_slice_from_bytes(Some(&packet.data)),
+        );
+    }
+}
+
+/// Tells the injectable network which interface exists: en0's IPv4, looked up
+/// once at factory creation. Good enough while calls start minutes after
+/// launch; a later change is a re-`add_interface` away.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+fn add_wifi_interface(network: &InjectableNetwork) {
+    unsafe {
+        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
+        if libc::getifaddrs(&mut ifap) != 0 {
+            warn!("add_wifi_interface: getifaddrs failed");
+            return;
+        }
+        let mut cursor = ifap;
+        while !cursor.is_null() {
+            let ifa = &*cursor;
+            if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as i32 == libc::AF_INET {
+                let name = std::ffi::CStr::from_ptr(ifa.ifa_name).to_string_lossy();
+                if name == "en0" {
+                    let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
+                    let ip = IpAddr::from(std::net::Ipv4Addr::from(u32::from_be(
+                        sin.sin_addr.s_addr,
+                    )));
+                    info!("add_wifi_interface: en0 {}", ip);
+                    network.add_interface("en0", NetworkInterfaceType::Wifi, ip, 1);
+                    libc::freeifaddrs(ifap);
+                    return;
+                }
+            }
+            cursor = ifa.ifa_next;
+        }
+        warn!("add_wifi_interface: no en0 IPv4 address");
+        libc::freeifaddrs(ifap);
     }
 }

@@ -596,6 +596,68 @@ pub unsafe extern "C" fn ringrtcCreateCallManager(
     }
 }
 
+/// The watch's UDP transport: the TN3135 grant arms Network.framework flows
+/// only -- BSD sockets get EHOSTUNREACH for the life of a call (measured
+/// 2026-08-31) -- so WebRTC's packets ride Swift-owned NWConnections, through
+/// this interface on the way out and `ringrtcReceivedUdp` on the way in,
+/// with the injectable network standing in for the OS network stack.
+#[repr(C)]
+#[allow(non_snake_case)]
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+pub struct AppUdpTransport {
+    /// Raw pointer to the Swift transport object, retained.
+    pub object: *mut c_void,
+    pub destroy: extern "C" fn(object: *mut c_void),
+    /// Called on WebRTC's network thread. The slices are borrowed for the
+    /// duration of the call only; Swift copies before leaving it.
+    pub sendUdp: extern "C" fn(
+        object: *mut c_void,
+        srcIp: AppByteSlice,
+        srcPort: u16,
+        dstIp: AppByteSlice,
+        dstPort: u16,
+        data: AppByteSlice,
+    ),
+}
+
+/// The inbound half of the watch's UDP transport: Swift hands every datagram
+/// its NWConnections receive back to the injectable network here. Callable
+/// from any queue -- the C++ side copies the data and posts it to WebRTC's
+/// network thread (`InjectableNetworkImpl::ReceiveUdp`).
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "C" fn ringrtcReceivedUdp(
+    srcIp: AppByteSlice,
+    srcPort: u16,
+    dstIp: AppByteSlice,
+    dstPort: u16,
+    data: AppByteSlice,
+) {
+    let (Some(src_ip), Some(dst_ip)) = (
+        string_from_app_slice(&srcIp),
+        string_from_app_slice(&dstIp),
+    ) else {
+        error!("ringrtcReceivedUdp: missing addresses");
+        return;
+    };
+    let (Ok(src_ip), Ok(dst_ip)) = (
+        src_ip.parse::<std::net::IpAddr>(),
+        dst_ip.parse::<std::net::IpAddr>(),
+    ) else {
+        error!("ringrtcReceivedUdp: unparseable addresses");
+        return;
+    };
+    let Some(data) = byte_vec_from_app_slice(&data) else {
+        return;
+    };
+    crate::ios::ios_platform::received_udp(
+        std::net::SocketAddr::new(src_ip, srcPort),
+        std::net::SocketAddr::new(dst_ip, dstPort),
+        data,
+    );
+}
+
 /// The watch's `ringrtcCreateCallManager`. iOS sets WebRTC's field trials
 /// through the ObjC SDK before it creates its PeerConnectionFactory; the
 /// watch's factory is created in here, so the trials come in with it, in
@@ -608,13 +670,14 @@ pub unsafe extern "C" fn ringrtcCreateCallManagerWithFieldTrials(
     appInterface: AppInterface,
     httpClient: *const http::ios::Client,
     fieldTrials: AppByteSlice,
+    udpTransport: AppUdpTransport,
 ) -> *mut c_void {
     let Some(field_trials) = string_from_app_slice(&fieldTrials) else {
         error!("ringrtcCreateCallManagerWithFieldTrials: field trials are not UTF-8");
         return std::ptr::null_mut();
     };
     if let Some(http_client) = unsafe { httpClient.as_ref() } {
-        call_manager::create(appInterface, http_client.clone(), &field_trials)
+        call_manager::create(appInterface, http_client.clone(), &field_trials, udpTransport)
             .unwrap_or(std::ptr::null_mut())
     } else {
         std::ptr::null_mut()

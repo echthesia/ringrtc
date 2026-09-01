@@ -402,11 +402,17 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
         // be transferred to RingRTC.
         let interface = CallManagerInterface(delegate: self)
 
+        // The watch's packets ride Swift-owned NWConnections (the TN3135
+        // grant arms Network.framework only; BSD sockets are refused), fed
+        // through RingRTC's injectable network. RingRTC retains the
+        // transport from here (its wrapper passes ownership).
+        let udpTransport = UdpTransport()
+
         let fieldTrialsSlice = allocatedAppByteSliceFromString(maybe_string: CallManagerGlobal.fieldTrialsString(fieldTrials))
         defer { fieldTrialsSlice.bytes?.deallocate() }
 
         // Create the RingRTC Call Manager itself.
-        guard let ringRtcCallManager = ringrtcCreateCallManagerWithFieldTrials(interface.getWrapper(), self.httpClient.rtcClient, fieldTrialsSlice) else {
+        guard let ringRtcCallManager = ringrtcCreateCallManagerWithFieldTrials(interface.getWrapper(), self.httpClient.rtcClient, fieldTrialsSlice, udpTransport.getWrapper()) else {
             fail("unable to create ringRtcCallManager")
         }
 

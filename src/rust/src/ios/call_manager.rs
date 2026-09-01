@@ -9,6 +9,8 @@ use std::{ffi::c_void, time::Duration};
 
 use anyhow::anyhow;
 
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+use crate::ios::api::call_manager_interface::AppUdpTransport;
 use crate::{
     common::{CallConfig, CallId, CallMediaType, DataMode, DeviceId, Result},
     core::{
@@ -42,11 +44,13 @@ pub fn create(
     app_interface: AppInterface,
     http_client: http::ios::Client,
     #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))] field_trials: &str,
+    #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+    udp_transport: AppUdpTransport,
 ) -> Result<*mut c_void> {
     #[cfg(not(all(target_os = "watchos", not(feature = "sim"), not(feature = "native"))))]
     let platform = IosPlatform::new(app_interface)?;
     #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-    let platform = IosPlatform::new(app_interface, field_trials)?;
+    let platform = IosPlatform::new(app_interface, field_trials, udp_transport)?;
     let call_manager = IosCallManager::new(platform, http_client)?;
     let call_manager_box = Box::new(call_manager);
     Ok(Box::into_raw(call_manager_box) as *mut c_void)
