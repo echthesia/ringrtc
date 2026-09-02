@@ -116,15 +116,24 @@ final class UdpTransport {
     /// network never reuses a port), so the groups go too, after a grace
     /// period. Without this a group lingers until its flows error out
     /// (ENOTCONN 47s after one hangup, measured).
+    ///
+    /// The sockets stay in the map until the grace expires: RingRTC sends
+    /// the hangup over RTP data some 30 ms after it reports the end, and a
+    /// socket dropped from the map at that moment was recreated for it,
+    /// refused its own port (the retiring group still held it) and fell back
+    /// to an ephemeral one, so the hangup left from a port the remote had
+    /// never seen (measured, two calls).
     func callEnded() {
         queue.async {
             let retiring = self.sockets
-            self.sockets.removeAll()
-            self.fellBack.removeAll()
             guard !retiring.isEmpty else { return }
             Logger.info("UdpTransport: call ended, retiring \(retiring.count) socket(s)")
             self.queue.asyncAfter(deadline: .now() + Self.retirementGrace) {
-                for socket in retiring.values {
+                for (local, socket) in retiring {
+                    if self.sockets[local] === socket {
+                        self.sockets.removeValue(forKey: local)
+                    }
+                    self.fellBack.remove(local)
                     socket.cancel()
                 }
             }
