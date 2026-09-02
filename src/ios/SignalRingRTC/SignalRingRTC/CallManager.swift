@@ -386,6 +386,9 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
     private let peekInfoRequests: Requests<PeekInfo> = Requests()
 
     private var ringRtcCallManager: UnsafeMutableRawPointer!
+#if os(watchOS)
+    private var udpTransport: UdpTransport?
+#endif
 
     private var isAudioEnabled: Bool = true
 
@@ -402,11 +405,13 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
         // be transferred to RingRTC.
         let interface = CallManagerInterface(delegate: self)
 
-        // The watch's packets ride Swift-owned NWConnections (the TN3135
-        // grant arms Network.framework only; BSD sockets are refused), fed
-        // through RingRTC's injectable network. RingRTC retains the
-        // transport from here (its wrapper passes ownership).
+        // The watch's packets ride Swift-owned Network.framework groups (the
+        // TN3135 grant arms Network.framework only; BSD sockets are refused),
+        // fed through RingRTC's injectable network. RingRTC retains the
+        // transport from here (its wrapper passes ownership); this side keeps
+        // it to retire a call's sockets when the call ends.
         let udpTransport = UdpTransport()
+        self.udpTransport = udpTransport
 
         let fieldTrialsSlice = allocatedAppByteSliceFromString(maybe_string: CallManagerGlobal.fieldTrialsString(fieldTrials))
         defer { fieldTrialsSlice.bytes?.deallocate() }
@@ -987,6 +992,9 @@ public class CallManager<CallType, CallManagerDelegateType>: CallManagerInterfac
     
     func onCallEnded(remote: UnsafeRawPointer, callId: UInt64, reason: CallEndReason, summary: CallSummary) {
         Logger.debug("onCallEnded")
+#if os(watchOS)
+        udpTransport?.callEnded()
+#endif
         
         Task { @MainActor in
             Logger.debug("onCallEnded - main.async")
