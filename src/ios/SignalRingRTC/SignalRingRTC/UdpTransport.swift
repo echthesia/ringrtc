@@ -27,20 +27,18 @@
 // on our port, which nothing sends to); it is never a destination. No
 // entitlement is asked for on watchOS 27 (measured).
 //
-// The watch has two paths, and the group must be told which (measured
-// 2026-09-02, shape probes inside a granted call, phone nearby):
-// - Wi-Fi (en0) direct: only flows that REQUIRE the Wi-Fi interface type
-//   take it. Then the group's own sends complete, replies land on its
-//   receive handler, the requested port is honored and the router
-//   preserves it (mapped port == local port), so host and reflexive
-//   candidates are honest. Binding the en0 address without requiring the
-//   type parks the flow in .waiting(ENETDOWN) while the phone is near.
-// - The iPhone companion tunnel (utun4, .other) otherwise: the group's own
-//   sends never complete there, but flows extracted from the group do, and
-//   the phone NATs them (mapped port != local), so only reflexive and relay
-//   candidates work and they are learned per socket anyway.
-// So: Wi-Fi on the current path -> require it and send on the group;
-// otherwise leave the path free and send on extracted flows.
+// The watch has two paths (measured 2026-09-02, shape probes inside a
+// granted call, phone nearby): with the phone near, the OS routes flows
+// through the iPhone companion tunnel (utun4), where the phone NATs them and
+// the group's own sends never complete, but flows extracted from the group
+// do; only a flow that REQUIRES the Wi-Fi interface type takes en0 directly,
+// where the group sends itself and the router preserves the port. The
+// transport follows the OS's choice rather than forcing en0 (the OS picks the
+// tunnel for battery, as Apple's own calls do near the phone): every socket
+// is an unconstrained group, inbound on its receive handler, outbound on
+// extracted per-remote flows. Cost: host candidates are only honest when the
+// default path is a direct interface; reflexive and relay candidates are
+// learned per socket and work either way.
 
 #if os(watchOS)
 
@@ -72,21 +70,19 @@ final class UdpTransport {
         let local: LocalEndpoint
         let honestPort: Bool
         let group: NWConnectionGroup
-        /// True on Wi-Fi: the group sends. False on the tunnel: outbound
-        /// rides per-remote connections extracted from the group (see the
-        /// header); the group's own sends never complete there.
-        let sendsOnGroup: Bool
+        /// Outbound rides per-remote connections extracted from the group
+        /// (see the header); the group's own sends only complete on a
+        /// Wi-Fi-required group, which this is not.
         var flows: [NWEndpoint: Flow] = [:]
         /// Extraction needs a started group; datagrams sent before `.ready`
         /// wait here (bounded; ICE retransmits).
         var pending: [(NWEndpoint, String, UInt16, Data)] = []
         var isReady = false
 
-        init(local: LocalEndpoint, honestPort: Bool, group: NWConnectionGroup, sendsOnGroup: Bool) {
+        init(local: LocalEndpoint, honestPort: Bool, group: NWConnectionGroup) {
             self.local = local
             self.honestPort = honestPort
             self.group = group
-            self.sendsOnGroup = sendsOnGroup
         }
 
         func cancel() {
@@ -108,18 +104,6 @@ final class UdpTransport {
     }
 
     private static let maxPending = 64
-
-    /// Whether the current path has Wi-Fi, which decides a new socket's
-    /// shape (see the header). Updated by a path monitor on the queue.
-    private var wifiOnPath = false
-    private let pathMonitor = NWPathMonitor()
-
-    init() {
-        pathMonitor.pathUpdateHandler = { [weak self] path in
-            self?.wifiOnPath = path.usesInterfaceType(.wifi)
-        }
-        pathMonitor.start(queue: queue)
-    }
 
     func getWrapper() -> AppUdpTransport {
         return AppUdpTransport(
@@ -172,14 +156,6 @@ final class UdpTransport {
     /// On the queue, group ready.
     private func send(_ data: Data, from socket: Socket, to remote: NWEndpoint, dstIp: String, dstPort: UInt16) {
         let local = socket.local
-        if socket.sendsOnGroup {
-            socket.group.send(content: data, to: remote) { error in
-                if let error {
-                    Logger.warn("UdpTransport \(local) -> \(dstIp):\(dstPort) send: \(error)")
-                }
-            }
-            return
-        }
         guard let flow = flow(from: socket, to: remote, dstIp: dstIp, dstPort: dstPort) else { return }
         flow.connection.send(content: data, completion: .contentProcessed { error in
             if let error {
@@ -241,9 +217,8 @@ final class UdpTransport {
             return existing
         }
         let honestPort = !fellBack.contains(local)
-        let wifi = wifiOnPath
-        guard let group = makeGroup(local: local, honestPort: honestPort, requireWifi: wifi) else { return nil }
-        let socket = Socket(local: local, honestPort: honestPort, group: group, sendsOnGroup: wifi)
+        guard let group = makeGroup(local: local, honestPort: honestPort) else { return nil }
+        let socket = Socket(local: local, honestPort: honestPort, group: group)
         sockets[local] = socket
         group.stateUpdateHandler = { [weak self, weak socket] state in
             guard let self, let socket else { return }
@@ -256,11 +231,11 @@ final class UdpTransport {
             Self.inject(content, remoteIp: remoteIp, remotePort: remotePort, local: local)
         }
         group.start(queue: queue)
-        Logger.info("UdpTransport: socket \(local) \(honestPort ? "on its own port" : "on an ephemeral port"), \(wifi ? "Wi-Fi, group sends" : "no Wi-Fi, extracted flows")")
+        Logger.info("UdpTransport: socket \(local) \(honestPort ? "on its own port" : "on an ephemeral port")")
         return socket
     }
 
-    private func makeGroup(local: LocalEndpoint, honestPort: Bool, requireWifi: Bool) -> NWConnectionGroup? {
+    private func makeGroup(local: LocalEndpoint, honestPort: Bool) -> NWConnectionGroup? {
         let isV6 = local.ip.contains(":")
         let member = NWEndpoint.hostPort(
             host: isV6 ? "ff02::fb" : "224.0.0.251",
@@ -274,12 +249,9 @@ final class UdpTransport {
         }
         let parameters = NWParameters.udp
         parameters.allowLocalEndpointReuse = true
-        if requireWifi {
-            parameters.requiredInterfaceType = .wifi
-        }
         if honestPort, let port = NWEndpoint.Port(rawValue: local.port) {
-            // The wildcard host: the interface type picks the interface, and
-            // an address-bound group extracts nothing on the tunnel.
+            // The wildcard host: an address-bound group extracts nothing on
+            // the tunnel, and the OS picks the interface.
             parameters.requiredLocalEndpoint = NWEndpoint.hostPort(host: "0.0.0.0", port: port)
         }
         return NWConnectionGroup(with: descriptor, using: parameters)
