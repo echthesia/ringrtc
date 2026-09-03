@@ -1206,7 +1206,7 @@ impl IosPlatform {
                 .ok_or(RingRtcError::CreatePeerConnectionFactory)?;
             injectable.set_sender(Box::new(SwiftUdpSender(udp_transport)));
             let _ = INJECTABLE_NETWORK.set(InjectableNetworkHandle(injectable));
-            sync_network_interfaces(InterfaceSync::Full, "factory");
+            sync_network_interfaces("factory");
         }
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
@@ -1365,36 +1365,18 @@ static REGISTERED_INTERFACES: std::sync::Mutex<
     std::collections::BTreeMap<String, os_interfaces::Interface>,
 > = std::sync::Mutex::new(std::collections::BTreeMap::new());
 
-/// What a re-read of the OS's interfaces may do to the injectable network.
-///
-/// The C++ side (rffi injectable_network.cc) keys its networks by name; its
-/// `RemoveInterface` deletes the `Network` object outright, and never
-/// notifies, while WebRTC's ports and connections hold raw pointers to
-/// theirs (`Port::network_`, dereferenced for logging, cost and candidate
-/// names), so a removal with a PeerConnection alive is a use-after-free.
-/// Its `AddInterface` of a name already present is a silent no-op
-/// (`std::map::insert`), so a moved address cannot be replaced either.
-/// WebRTC's own network manager keeps retired networks alive for exactly
-/// this reason; the fix belongs in the C++ (retire rather than delete,
-/// replace on re-add, notify on remove), and until it is made, this.
-#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum InterfaceSync {
-    /// Add, remove and replace. Only where no PeerConnection exists: at
-    /// factory creation, and at `proceed()`, before the call's is built
-    /// (the previous call's went with that call).
-    Full,
-    /// Add what is new; leave what vanished or moved, logged as stale, for
-    /// the next `Full`. What a live call can take.
-    AddOnly,
-}
-
 /// Re-reads the OS's interfaces and brings the injectable network's list up
-/// to date, as far as `mode` allows. Callable from any thread: the C++ calls
-/// post to WebRTC's network thread, in order, and the lock serialises the
-/// diff.
+/// to date: adds what is new, removes what vanished, replaces what moved (a
+/// remove and an add under the same name). Safe with a call up: the C++
+/// side (rffi injectable_network.cc) retires a removed or replaced
+/// `Network` instead of freeing it -- WebRTC's ports and connections hold
+/// raw pointers to theirs for as long as they exist -- and notifies, so the
+/// port allocator marks that network's sequence failed and prunes its
+/// ports, as it does under the OS network manager. Callable from any
+/// thread: the C++ calls post to WebRTC's network thread, in order, and the
+/// lock serialises the diff.
 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-pub(crate) fn sync_network_interfaces(mode: InterfaceSync, why: &str) {
+pub(crate) fn sync_network_interfaces(why: &str) {
     let Some(handle) = INJECTABLE_NETWORK.get() else {
         debug!("network interfaces ({why}): no injectable network yet");
         return;
@@ -1406,14 +1388,9 @@ pub(crate) fn sync_network_interfaces(mode: InterfaceSync, why: &str) {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
 
     let mut removed = Vec::new();
-    let mut stale = Vec::new();
     for (key, have) in registered.iter() {
-        if wanted.get(key) == Some(have) {
-            continue;
-        }
-        match mode {
-            InterfaceSync::Full => removed.push(key.clone()),
-            InterfaceSync::AddOnly => stale.push(key.clone()),
+        if wanted.get(key) != Some(have) {
+            removed.push(key.clone());
         }
     }
     for key in &removed {
@@ -1423,7 +1400,6 @@ pub(crate) fn sync_network_interfaces(mode: InterfaceSync, why: &str) {
 
     let mut added = Vec::new();
     for (key, want) in &wanted {
-        // Present and equal, or stale: either way the C++ would ignore the add.
         if registered.contains_key(key) {
             continue;
         }
@@ -1437,11 +1413,5 @@ pub(crate) fn sync_network_interfaces(mode: InterfaceSync, why: &str) {
         .map(|(key, interface)| format!("{key} {interface}"))
         .collect::<Vec<_>>()
         .join(", ");
-    if mode == InterfaceSync::Full || !(added.is_empty() && stale.is_empty()) {
-        info!(
-            "network interfaces ({why}, {mode:?}): [{listing}] added {added:?} removed {removed:?} stale {stale:?}"
-        );
-    } else {
-        debug!("network interfaces ({why}): unchanged [{listing}]");
-    }
+    info!("network interfaces ({why}): [{listing}] added {added:?} removed {removed:?}");
 }
