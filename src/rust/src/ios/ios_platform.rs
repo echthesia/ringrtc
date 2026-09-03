@@ -20,9 +20,9 @@ use crate::error::RingRtcError;
 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
 use crate::ios::api::call_manager_interface::AppUdpTransport;
 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-use crate::webrtc::{injectable_network, injectable_network::InjectableNetwork, network::NetworkInterfaceType};
+use crate::webrtc::{injectable_network, injectable_network::InjectableNetwork, os_interfaces};
 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-use std::net::{IpAddr, SocketAddr};
+use std::net::SocketAddr;
 use crate::webrtc::{
     media::AudioTrack,
     peer_connection_factory::{
@@ -1205,8 +1205,8 @@ impl IosPlatform {
                 .injectable_network()
                 .ok_or(RingRtcError::CreatePeerConnectionFactory)?;
             injectable.set_sender(Box::new(SwiftUdpSender(udp_transport)));
-            add_wifi_interface(&injectable);
             let _ = INJECTABLE_NETWORK.set(InjectableNetworkHandle(injectable));
+            sync_network_interfaces(InterfaceSync::Full, "factory");
         }
         #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
         let outgoing_audio_track = peer_connection_factory.create_outgoing_audio_track()?;
@@ -1358,36 +1358,90 @@ impl injectable_network::PacketSender for SwiftUdpSender {
     }
 }
 
-/// Tells the injectable network which interface exists: en0's IPv4, looked up
-/// once at factory creation. Good enough while calls start minutes after
-/// launch; a later change is a re-`add_interface` away.
+/// What the injectable network has been told, by the name it keys by
+/// (`os_interfaces` says how the names are made).
 #[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
-fn add_wifi_interface(network: &InjectableNetwork) {
-    unsafe {
-        let mut ifap: *mut libc::ifaddrs = std::ptr::null_mut();
-        if libc::getifaddrs(&mut ifap) != 0 {
-            warn!("add_wifi_interface: getifaddrs failed");
-            return;
+static REGISTERED_INTERFACES: std::sync::Mutex<
+    std::collections::BTreeMap<String, os_interfaces::Interface>,
+> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+/// What a re-read of the OS's interfaces may do to the injectable network.
+///
+/// The C++ side (rffi injectable_network.cc) keys its networks by name; its
+/// `RemoveInterface` deletes the `Network` object outright, and never
+/// notifies, while WebRTC's ports and connections hold raw pointers to
+/// theirs (`Port::network_`, dereferenced for logging, cost and candidate
+/// names), so a removal with a PeerConnection alive is a use-after-free.
+/// Its `AddInterface` of a name already present is a silent no-op
+/// (`std::map::insert`), so a moved address cannot be replaced either.
+/// WebRTC's own network manager keeps retired networks alive for exactly
+/// this reason; the fix belongs in the C++ (retire rather than delete,
+/// replace on re-add, notify on remove), and until it is made, this.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum InterfaceSync {
+    /// Add, remove and replace. Only where no PeerConnection exists: at
+    /// factory creation, and at `proceed()`, before the call's is built
+    /// (the previous call's went with that call).
+    Full,
+    /// Add what is new; leave what vanished or moved, logged as stale, for
+    /// the next `Full`. What a live call can take.
+    AddOnly,
+}
+
+/// Re-reads the OS's interfaces and brings the injectable network's list up
+/// to date, as far as `mode` allows. Callable from any thread: the C++ calls
+/// post to WebRTC's network thread, in order, and the lock serialises the
+/// diff.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+pub(crate) fn sync_network_interfaces(mode: InterfaceSync, why: &str) {
+    let Some(handle) = INJECTABLE_NETWORK.get() else {
+        debug!("network interfaces ({why}): no injectable network yet");
+        return;
+    };
+    let network = &handle.0;
+    let wanted = os_interfaces::current();
+    let mut registered = REGISTERED_INTERFACES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+
+    let mut removed = Vec::new();
+    let mut stale = Vec::new();
+    for (key, have) in registered.iter() {
+        if wanted.get(key) == Some(have) {
+            continue;
         }
-        let mut cursor = ifap;
-        while !cursor.is_null() {
-            let ifa = &*cursor;
-            if !ifa.ifa_addr.is_null() && (*ifa.ifa_addr).sa_family as i32 == libc::AF_INET {
-                let name = std::ffi::CStr::from_ptr(ifa.ifa_name).to_string_lossy();
-                if name == "en0" {
-                    let sin = &*(ifa.ifa_addr as *const libc::sockaddr_in);
-                    let ip = IpAddr::from(std::net::Ipv4Addr::from(u32::from_be(
-                        sin.sin_addr.s_addr,
-                    )));
-                    info!("add_wifi_interface: en0 {}", ip);
-                    network.add_interface("en0", NetworkInterfaceType::Wifi, ip, 1);
-                    libc::freeifaddrs(ifap);
-                    return;
-                }
-            }
-            cursor = ifa.ifa_next;
+        match mode {
+            InterfaceSync::Full => removed.push(key.clone()),
+            InterfaceSync::AddOnly => stale.push(key.clone()),
         }
-        warn!("add_wifi_interface: no en0 IPv4 address");
-        libc::freeifaddrs(ifap);
+    }
+    for key in &removed {
+        network.remove_interface(key);
+        registered.remove(key);
+    }
+
+    let mut added = Vec::new();
+    for (key, want) in &wanted {
+        // Present and equal, or stale: either way the C++ would ignore the add.
+        if registered.contains_key(key) {
+            continue;
+        }
+        network.add_interface(key, want.typ, want.ip, want.preference);
+        registered.insert(key.clone(), want.clone());
+        added.push(key.clone());
+    }
+
+    let listing = registered
+        .iter()
+        .map(|(key, interface)| format!("{key} {interface}"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if mode == InterfaceSync::Full || !(added.is_empty() && stale.is_empty()) {
+        info!(
+            "network interfaces ({why}, {mode:?}): [{listing}] added {added:?} removed {removed:?} stale {stale:?}"
+        );
+    } else {
+        debug!("network interfaces ({why}): unchanged [{listing}]");
     }
 }

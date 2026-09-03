@@ -658,6 +658,21 @@ pub extern "C" fn ringrtcReceivedUdp(
     );
 }
 
+/// The watch's path changed (UdpTransport's NWPathMonitor): re-read the OS's
+/// interfaces and tell the injectable network about any new one. Adds only,
+/// since a call may be up (ios_platform's `InterfaceSync` says why); what
+/// vanished is dropped at the next `proceed()`. Its own name: watch-only,
+/// and cbindgen emits every cfg unguarded.
+#[cfg(all(target_os = "watchos", not(feature = "sim"), not(feature = "native")))]
+#[unsafe(no_mangle)]
+#[allow(non_snake_case)]
+pub extern "C" fn ringrtcNetworkPathChanged() {
+    crate::ios::ios_platform::sync_network_interfaces(
+        crate::ios::ios_platform::InterfaceSync::AddOnly,
+        "path change",
+    );
+}
+
 /// The watch's `ringrtcCreateCallManager`. iOS sets WebRTC's field trials
 /// through the ObjC SDK before it creates its PeerConnectionFactory; the
 /// watch's factory is created in here, so the trials come in with it, in
@@ -877,6 +892,13 @@ pub extern "C" fn ringrtcProceedWithIceServers(
     audioLevelsIntervalMillis: u64,
     dred_duration: u8,
 ) -> *mut c_void {
+    // The interfaces WebRTC will gather on, re-read first: with no
+    // PeerConnection alive this is the one moment a vanished or moved
+    // interface can be dropped (ios_platform's `InterfaceSync` says why).
+    crate::ios::ios_platform::sync_network_interfaces(
+        crate::ios::ios_platform::InterfaceSync::Full,
+        "proceed",
+    );
     let audio_levels_interval = if audioLevelsIntervalMillis == 0 {
         None
     } else {

@@ -11,7 +11,7 @@ use std::{
 
 /// Rust version of WebRTC AdapterType
 #[repr(C)]
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum NetworkInterfaceType {
     Unknown = 0,
     Ethernet = 1,

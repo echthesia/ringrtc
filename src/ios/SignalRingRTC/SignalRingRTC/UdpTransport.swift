@@ -105,6 +105,26 @@ final class UdpTransport {
 
     private static let maxPending = 64
 
+    /// The OS's path, followed so that the interface list WebRTC gathers on
+    /// follows it: each change re-runs Rust's enumeration
+    /// (`ringrtcNetworkPathChanged`; ios_platform.rs says what a change can
+    /// and cannot do mid-call). The path's own interfaces are logged beside
+    /// it: the OS's classification against Rust's, by name.
+    private let pathMonitor = NWPathMonitor()
+
+    init() {
+        pathMonitor.pathUpdateHandler = { path in
+            let interfaces = path.availableInterfaces.map { "\($0.name):\($0.type)" }.joined(separator: " ")
+            Logger.info("UdpTransport: path \(path.status) [\(interfaces)]")
+            ringrtcNetworkPathChanged()
+        }
+        pathMonitor.start(queue: queue)
+    }
+
+    deinit {
+        pathMonitor.cancel()
+    }
+
     func getWrapper() -> AppUdpTransport {
         return AppUdpTransport(
             object: UnsafeMutableRawPointer(Unmanaged.passRetained(self).toOpaque()),

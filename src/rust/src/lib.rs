@@ -119,6 +119,11 @@ pub mod webrtc {
     pub mod logging;
     pub mod media;
     pub mod network;
+    // The watch feeds the injectable network the OS's interfaces itself
+    // (ios_platform.rs); the policy is host-testable, so it compiles for
+    // `cargo test` too.
+    #[cfg(any(test, all(target_os = "watchos", feature = "injectable_network")))]
+    pub mod os_interfaces;
     pub mod peer_connection;
     pub mod peer_connection_factory;
     pub mod peer_connection_observer;
